@@ -26,7 +26,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build and publish Windows installer
+      - name: Build Windows installer
         run: npm run release:win
+
+      - name: Publish GitHub release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $files = @(
+            Get-Item "release\school-scheduler-setup-*.exe",
+            Get-Item "release\school-scheduler-setup-*.exe.blockmap",
+            Get-Item "release\latest.yml"
+          )
+
+          if (gh release view $env:TAG_NAME 2>$null) {
+            gh release upload $env:TAG_NAME @($files.FullName) --clobber
+          } else {
+            gh release create $env:TAG_NAME @($files.FullName) --title $env:TAG_NAME --notes "Windows installer for ОЧУ ЦО Интеллект - Расписание."
+          }

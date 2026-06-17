@@ -1,6 +1,6 @@
 {
   "name": "school-scheduler",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Desktop-приложение для автоматического создания школьного расписания ОЧУ ЦО Интеллект",
   "author": "ОЧУ ЦО Интеллект",
   "private": true,
@@ -16,7 +16,7 @@
     "desktop": "npm run build && npm run desktop:assets && electron .",
     "dist:win": "npm run build && npm run desktop:assets && electron-builder --win nsis --x64",
     "dist:win:portable": "npm run build && npm run desktop:assets && electron-builder --win portable --x64",
-    "release:win": "npm run build && npm run desktop:assets && electron-builder --win nsis --x64 --publish always",
+    "release:win": "npm run dist:win",
     "test:smoke": "node scripts/smoke.mjs"
   },
   "build": {
