@@ -102,8 +102,10 @@ export function migrate() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       day_id TEXT NOT NULL,
       shift TEXT,
+      class_id INTEGER,
       period_number INTEGER NOT NULL,
-      reason TEXT NOT NULL DEFAULT ''
+      reason TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
@@ -127,6 +129,7 @@ export function migrate() {
   ensureColumn('assignments', 'room_id', 'INTEGER');
   ensureColumn('classes', 'shift', "TEXT NOT NULL DEFAULT 'morning'");
   ensureColumn('teacher_constraints', 'shift', 'TEXT');
+  ensureColumn('schedule_blocks', 'class_id', 'INTEGER');
   ensureColumn('class_advisor_assignments', 'room_id', 'INTEGER');
   ensureColumn('class_advisor_assignments', 'shift', 'TEXT');
   ensureColumn('class_advisor_assignments', 'note', "TEXT NOT NULL DEFAULT ''");
@@ -352,9 +355,9 @@ export function allTeacherConstraints() {
 
 export function allScheduleBlocks() {
   return db.prepare(`
-    SELECT id, day_id AS dayId, shift, period_number AS periodNumber, reason
+    SELECT id, day_id AS dayId, shift, class_id AS classId, period_number AS periodNumber, reason
     FROM schedule_blocks
-    ORDER BY day_id, shift, period_number
+    ORDER BY day_id, shift, class_id, period_number
   `).all();
 }
 

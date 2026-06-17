@@ -54,11 +54,16 @@ await request('/class-advisors', {
   method: 'POST',
   body: { advisors: boot.classes.map((item) => ({ classId: item.id, teacherId: advisorTeacher.id, roomId: boot.rooms[0]?.id || null, shift: item.shift, note: 'Smoke' })) }
 });
+const firstClass = boot.classes.find((item) => item.grade === 1 && item.letter === 'А');
 await request('/schedule-blocks', {
   method: 'POST',
-  body: { blocks: [{ dayId: 'mon', shift: '', periodNumber: 1, reason: 'Разговоры о важном' }] }
+  body: { blocks: [
+    { dayId: 'mon', shift: '', classId: null, periodNumber: 1, reason: 'Разговоры о важном' },
+    { dayId: 'tue', shift: '', classId: firstClass.id, periodNumber: 2, reason: 'Классная блокировка' }
+  ] }
 });
 boot = await request('/bootstrap');
+if (!boot.scheduleBlocks.some((item) => item.classId === firstClass.id && item.reason === 'Классная блокировка')) throw new Error('Блокировка конкретного класса не сохранилась');
 const schedule = await request('/generate', { method: 'POST', body: { classIds: boot.classes.map((item) => item.id), weekMode: 'one' } });
 await request(`/schedules/${schedule.id}/swap`, {
   method: 'POST',

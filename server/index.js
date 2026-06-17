@@ -423,12 +423,13 @@ app.post('/api/schedule-blocks', (req, res) => {
   const rows = z.array(z.object({
     dayId: z.string().min(1),
     shift: z.enum(['', 'morning', 'afternoon']).default(''),
+    classId: z.number().int().nullable().optional(),
     periodNumber: z.number().int().min(1),
     reason: z.string().default('')
   })).parse(req.body.blocks || []);
   db.exec('DELETE FROM schedule_blocks');
-  const stmt = db.prepare('INSERT INTO schedule_blocks (day_id, shift, period_number, reason) VALUES (?, ?, ?, ?)');
-  runTransaction(() => rows.forEach((row) => stmt.run(row.dayId, row.shift || null, row.periodNumber, row.reason || '')));
+  const stmt = db.prepare('INSERT INTO schedule_blocks (day_id, shift, class_id, period_number, reason) VALUES (?, ?, ?, ?, ?)');
+  runTransaction(() => rows.forEach((row) => stmt.run(row.dayId, row.shift || null, row.classId || null, row.periodNumber, row.reason || '')));
   audit('replace', 'schedule-blocks', { count: rows.length });
   res.json({ scheduleBlocks: allScheduleBlocks() });
 });
@@ -1485,7 +1486,7 @@ function restoreBackup(backup) {
     insertRows('class_advisor_assignments', backup.classAdvisorAssignments || [], ['id', 'class_id', 'teacher_id', 'room_id', 'shift', 'note']);
     insertRows('assignments', backup.assignments || [], ['id', 'class_id', 'subject_id', 'teacher_id', 'room_id', 'weekly_hours']);
     insertRows('teacher_constraints', backup.teacherConstraints || [], ['id', 'teacher_id', 'day_id', 'shift', 'period_number', 'kind']);
-    insertRows('schedule_blocks', backup.scheduleBlocks || [], ['id', 'day_id', 'shift', 'period_number', 'reason']);
+    insertRows('schedule_blocks', backup.scheduleBlocks || [], ['id', 'day_id', 'shift', 'class_id', 'period_number', 'reason']);
     insertRows('settings', backup.settings || [], ['key', 'value']);
     insertRows('schedules', backup.schedules || [], ['id', 'title', 'week_mode', 'created_at', 'payload']);
   });

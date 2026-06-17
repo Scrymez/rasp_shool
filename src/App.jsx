@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { createPortal } from 'react-dom';
 import {
   BarChart3, BookOpen, CalendarDays, Check, ChevronRight, Database, Download, FileDown, FileSpreadsheet,
   DoorOpen, KeyRound, MoonStar, Play, Plus, Printer, Save, School,
-  RefreshCw, ShieldCheck, Sparkles, Trash2, Upload, Users
+  RefreshCw, ShieldCheck, Sparkles, Trash2, Upload, Users, X
 } from 'lucide-react';
 import './styles.css';
 
@@ -159,7 +160,11 @@ function App() {
         </header>
 
         <div className="workspace-scroll">
-          {trainingOpen && <TrainingPanel onClose={() => setTrainingOpen(false)} />}
+          {trainingOpen && (
+            <ModalFrame label="Обучение настройке расписания" className="training-modal" onClose={() => setTrainingOpen(false)}>
+              <TrainingPanel onClose={() => setTrainingOpen(false)} />
+            </ModalFrame>
+          )}
 
           {step === 0 && <Classes state={state} refresh={refresh} setNotice={setNotice} />}
           {step === 1 && <Subjects state={state} refresh={refresh} setNotice={setNotice} />}
@@ -229,6 +234,29 @@ function Login({ setLogged, setStep, setNotice, setState }) {
   );
 }
 
+function ModalFrame({ label, className = '', onClose, children }) {
+  return createPortal((
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className={`modal-window ${className}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <button className="modal-close" onClick={onClose} aria-label="Закрыть окно"><X size={20} /></button>
+        {children}
+      </section>
+    </div>
+  ), document.body);
+}
+
 function TrainingPanel({ onClose }) {
   const steps = [
     ['Классы', 'Добавьте классы вручную или импортом. Для каждого класса проверьте уровень, литеру и смену.'],
@@ -256,13 +284,13 @@ function TrainingPanel({ onClose }) {
   ];
 
   return (
-    <section className="training-panel" role="dialog" aria-modal="true" aria-label="Обучение настройке расписания">
+    <div className="training-panel">
       <div className="training-head">
         <div>
           <p className="eyebrow">обучение</p>
           <h2>Как настроить расписание</h2>
         </div>
-        <button onClick={onClose}>Закрыть</button>
+        <button onClick={onClose}><X size={18} /> Закрыть</button>
       </div>
       <div className="training-layout">
         <div className="training-steps">
@@ -291,7 +319,7 @@ function TrainingPanel({ onClose }) {
           </div>
         </aside>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -455,7 +483,11 @@ function Subjects({ state, refresh, setNotice }) {
           </label>
           <button onClick={add}><Plus size={16} /> Добавить</button>
         </div>
-        {rulesOpen && <DifficultyRulesModal onClose={() => setRulesOpen(false)} />}
+        {rulesOpen && (
+          <ModalFrame label="Правила оценки сложности уроков" className="rules-modal" onClose={() => setRulesOpen(false)}>
+            <DifficultyRulesModal onClose={() => setRulesOpen(false)} />
+          </ModalFrame>
+        )}
         <div className="subject-list">
           {state.subjects.map((subject) => (
             <button key={subject.id} className={selected?.id === subject.id ? 'active' : ''} onClick={() => setSelectedId(subject.id)}>
@@ -517,13 +549,13 @@ function DifficultyRulesModal({ onClose }) {
     ['5', 'Максимальная абстрактная и расчетная нагрузка: русский язык, математика, алгебра, геометрия, физика, химия.']
   ];
   return (
-    <section className="training-panel rules-modal" role="dialog" aria-modal="true" aria-label="Правила оценки сложности уроков">
+    <div className="training-panel">
       <div className="training-head">
         <div>
           <p className="eyebrow">сложность уроков</p>
           <h2>Правила оценки сложности</h2>
         </div>
-        <button onClick={onClose}>Закрыть</button>
+        <button onClick={onClose}><X size={18} /> Закрыть</button>
       </div>
       <p className="rules-lead">Шкала 1-5 нужна генератору: сложные уроки он ставит раньше, легкие ближе к концу дня.</p>
       <div className="difficulty-rules-grid">
@@ -534,7 +566,7 @@ function DifficultyRulesModal({ onClose }) {
           </article>
         ))}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -787,8 +819,14 @@ function Assignments({ state, refresh, setNotice }) {
 function Constraints({ state, refresh, setNotice }) {
   const [rows, setRows] = useState(state.teacherConstraints.length ? state.teacherConstraints : []);
   const [blocks, setBlocks] = useState(state.scheduleBlocks || []);
+  const uniqueTeachers = useMemo(() => uniqueTeachersByName(state.teachers), [state.teachers]);
+  const [quickTeacherId, setQuickTeacherId] = useState(uniqueTeachers[0]?.id || '');
+  const [quickDayId, setQuickDayId] = useState('');
   useEffect(() => setRows(state.teacherConstraints), [state.teacherConstraints]);
   useEffect(() => setBlocks(state.scheduleBlocks || []), [state.scheduleBlocks]);
+  useEffect(() => {
+    if (!quickTeacherId && uniqueTeachers[0]) setQuickTeacherId(uniqueTeachers[0].id);
+  }, [uniqueTeachers, quickTeacherId]);
   async function save() {
     await Promise.all([
       api('/teacher-constraints', {
@@ -797,7 +835,7 @@ function Constraints({ state, refresh, setNotice }) {
       }),
       api('/schedule-blocks', {
         method: 'POST',
-        body: { blocks: blocks.map((row) => ({ ...row, periodNumber: Number(row.periodNumber) || 1 })) }
+        body: { blocks: blocks.map((row) => ({ ...row, classId: row.classId ? Number(row.classId) : null, periodNumber: Number(row.periodNumber) || 1 })) }
       })
     ]);
     await refresh();
@@ -819,16 +857,23 @@ function Constraints({ state, refresh, setNotice }) {
     setRows([...rows, { teacherId, dayId, shift: '', periodNumber: null, kind: 'unavailable' }]);
   }
   function addTalksBlock() {
-    setBlocks([...blocks, { dayId: 'mon', shift: '', periodNumber: 1, reason: 'Разговоры о важном' }]);
+    setBlocks([...blocks, { dayId: 'mon', shift: '', classId: null, periodNumber: 1, reason: 'Разговоры о важном' }]);
+  }
+  function blockLabel(item) {
+    const schoolClass = state.classes.find((row) => row.id === Number(item.classId));
+    return schoolClass ? `${schoolClass.grade}${schoolClass.letter}` : 'все классы';
   }
   return (
-    <section className="grid-two">
-      <div className="panel">
+    <section className="constraints-layout">
+      <div className="panel wide-panel">
         <PanelTitle icon={ShieldCheck} title="Блокировка уроков школы" />
-        <p className="hint">Здесь блокируются слоты для всех классов. Пример: понедельник, 1 урок, Разговоры о важном.</p>
+        <p className="hint">Блокируйте слот для всей школы или только для выбранного класса. Пример: понедельник, 1 урок, Разговоры о важном.</p>
         <div className="segmented">
           <button onClick={addTalksBlock}><Plus size={16} /> Разговоры о важном</button>
-          <button onClick={() => setBlocks([...blocks, { dayId: 'mon', shift: '', periodNumber: 1, reason: '' }])}><Plus size={16} /> Добавить блокировку</button>
+          <button onClick={() => setBlocks([...blocks, { dayId: 'mon', shift: '', classId: null, periodNumber: 1, reason: '' }])}><Plus size={16} /> Добавить блокировку</button>
+        </div>
+        <div className="row-edit block-row header-row">
+          <b>День</b><b>Смена</b><b>Класс</b><b>Урок</b><b>Причина</b><b></b>
         </div>
         {blocks.map((row, index) => (
           <div className="row-edit block-row" key={index}>
@@ -839,45 +884,52 @@ function Constraints({ state, refresh, setNotice }) {
               <option value="">Обе смены</option>
               {shiftOptions(state).map((shift) => <option value={shift.id} key={shift.id}>{shift.name}</option>)}
             </select>
+            <select value={row.classId || ''} onChange={(e) => updateRows(blocks, setBlocks, index, 'classId', e.target.value ? Number(e.target.value) : null)}>
+              <option value="">Все классы</option>
+              {state.classes.map((item) => <option value={item.id} key={item.id}>{item.grade}{item.letter}</option>)}
+            </select>
             <input type="number" min="1" placeholder="Урок" value={row.periodNumber || 1} onChange={(e) => updateRows(blocks, setBlocks, index, 'periodNumber', Number(e.target.value))} />
             <input value={row.reason || ''} onChange={(e) => updateRows(blocks, setBlocks, index, 'reason', e.target.value)} placeholder="Причина" />
             <button onClick={() => setBlocks(blocks.filter((_, rowIndex) => rowIndex !== index))}><Trash2 size={16} /></button>
           </div>
         ))}
       </div>
-      <div className="panel">
+      <div className="panel wide-panel">
         <PanelTitle icon={ShieldCheck} title="Ограничения учителей" />
         <p className="hint">Можно запретить весь день, конкретный урок или быстро создать правило “учитель работает с 3/4 урока”.</p>
         <div className="constraint-quick">
-          <select id="quickTeacher">
+          <select value={quickTeacherId} onChange={(e) => setQuickTeacherId(e.target.value)}>
             <option value="">Учитель</option>
-            {state.teachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.fullName}</option>)}
+            {uniqueTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.fullName}</option>)}
           </select>
-          <select id="quickDay">
+          <select value={quickDayId} onChange={(e) => setQuickDayId(e.target.value)}>
             <option value="">Все учебные дни</option>
             {state.settings.days.map((day) => <option value={day.id} key={day.id}>{day.name}</option>)}
           </select>
           <button onClick={() => {
-            const teacherId = Number(document.getElementById('quickTeacher')?.value || 0);
-            const dayId = document.getElementById('quickDay')?.value || '';
+            const teacherId = Number(quickTeacherId || 0);
+            const dayId = quickDayId || '';
             if (teacherId) addTeacherFromPeriod(teacherId, 3, dayId);
           }}>С 3 урока</button>
           <button onClick={() => {
-            const teacherId = Number(document.getElementById('quickTeacher')?.value || 0);
-            const dayId = document.getElementById('quickDay')?.value || '';
+            const teacherId = Number(quickTeacherId || 0);
+            const dayId = quickDayId || '';
             if (teacherId) addTeacherFromPeriod(teacherId, 4, dayId);
           }}>С 4 урока</button>
           <button onClick={() => {
-            const teacherId = Number(document.getElementById('quickTeacher')?.value || 0);
-            const dayId = document.getElementById('quickDay')?.value || 'mon';
+            const teacherId = Number(quickTeacherId || 0);
+            const dayId = quickDayId || 'mon';
             if (teacherId) addTeacherDayOff(teacherId, dayId);
           }}>Выходной</button>
+        </div>
+        <div className="row-edit constraint-row header-row">
+          <b>Учитель</b><b>День</b><b>Смена</b><b>Урок</b><b></b>
         </div>
         {rows.map((row, index) => (
           <div className="row-edit constraint-row" key={index}>
             <select value={row.teacherId || ''} onChange={(e) => updateRows(rows, setRows, index, 'teacherId', Number(e.target.value))}>
               <option value="">Учитель</option>
-              {uniqueTeachersByName(state.teachers).map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.fullName}</option>)}
+              {uniqueTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.fullName}</option>)}
             </select>
             <select value={row.dayId || 'mon'} onChange={(e) => updateRows(rows, setRows, index, 'dayId', e.target.value)}>
               {state.settings.days.map((day) => <option value={day.id} key={day.id}>{day.name}</option>)}
@@ -891,21 +943,35 @@ function Constraints({ state, refresh, setNotice }) {
           </div>
         ))}
         <div className="segmented">
-          <button onClick={() => setRows([...rows, { teacherId: uniqueTeachersByName(state.teachers)[0]?.id || 0, dayId: 'mon', shift: '', periodNumber: null, kind: 'unavailable' }])}><Plus size={16} /> Добавить</button>
+          <button onClick={() => setRows([...rows, { teacherId: uniqueTeachers[0]?.id || 0, dayId: 'mon', shift: '', periodNumber: null, kind: 'unavailable' }])}><Plus size={16} /> Добавить</button>
           <button className="primary" onClick={save}><Save size={18} /> Сохранить ограничения</button>
         </div>
       </div>
-      <ListPanel title="Активные запреты" items={[
-        ...blocks.map((item) => {
-          const day = state.settings.days.find((row) => row.id === item.dayId);
-          return `${day?.name || item.dayId} · ${item.shift ? shiftName(state, item.shift) : 'обе смены'} · ${item.periodNumber} урок · ${item.reason || 'блокировка'}`;
-        }),
-        ...rows.map((item) => {
-          const teacher = state.teachers.find((row) => row.id === Number(item.teacherId));
-          const day = state.settings.days.find((row) => row.id === item.dayId);
-          return `${teacher?.fullName || 'Учитель'} · ${day?.name || item.dayId} · ${item.shift ? shiftName(state, item.shift) : 'обе смены'} · ${item.periodNumber || 'весь день'}`;
-        })
-      ]} />
+      <div className="panel list-panel constraints-active">
+        <PanelTitle icon={ShieldCheck} title="Активные запреты" />
+        <div>
+          {blocks.map((item, index) => {
+            const day = state.settings.days.find((row) => row.id === item.dayId);
+            return (
+              <p className="action-line" key={`block-${index}`}>
+                <span>Школа · {blockLabel(item)} · {day?.name || item.dayId} · {item.shift ? shiftName(state, item.shift) : 'обе смены'} · {item.periodNumber} урок · {item.reason || 'блокировка'}</span>
+                <button onClick={() => setBlocks(blocks.filter((_, rowIndex) => rowIndex !== index))} title="Удалить блокировку"><Trash2 size={16} /></button>
+              </p>
+            );
+          })}
+          {rows.map((item, index) => {
+            const teacher = state.teachers.find((row) => row.id === Number(item.teacherId));
+            const day = state.settings.days.find((row) => row.id === item.dayId);
+            return (
+              <p className="action-line" key={`teacher-${index}`}>
+                <span>{teacher?.fullName || 'Учитель'} · {day?.name || item.dayId} · {item.shift ? shiftName(state, item.shift) : 'обе смены'} · {item.periodNumber || 'весь день'}</span>
+                <button onClick={() => setRows(rows.filter((_, rowIndex) => rowIndex !== index))} title="Удалить ограничение"><Trash2 size={16} /></button>
+              </p>
+            );
+          })}
+          {!blocks.length && !rows.length && <p className="hint">Запретов нет</p>}
+        </div>
+      </div>
     </section>
   );
 }

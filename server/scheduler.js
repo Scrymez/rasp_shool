@@ -143,7 +143,7 @@ function bestSlot({ grid, days, periods, lesson, busy, settings, schoolClass, sh
 function violatesHardRules({ grid, day, period, lesson, busy, settings, schoolClass, shift, variant }) {
   if (dayLoad(grid, day.id) >= maxLessons(settings, schoolClass.grade)) return true;
   if (dayDifficulty(grid, day.id) + lesson.difficulty > maxDailyDifficulty(settings, schoolClass.grade)) return true;
-  if (isScheduleBlocked(settings, day.id, period.number, shift)) return true;
+  if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return true;
   if (isTeacherUnavailable(settings, lesson.teacherId, day.id, period.number, shift)) return true;
   if (lesson.teacherId && resourceBusy(busy.teachers, settings, variant, shift, lesson.teacherId, day.id, period)) return true;
   if (lesson.roomId && resourceBusy(busy.rooms, settings, variant, shift, lesson.roomId, day.id, period)) return true;
@@ -360,10 +360,11 @@ function isTeacherUnavailable(settings, teacherId, dayId, periodNumber, shift) {
   ));
 }
 
-function isScheduleBlocked(settings, dayId, periodNumber, shift) {
+function isScheduleBlocked(settings, dayId, periodNumber, shift, classId) {
   return (settings.scheduleBlocks || []).some((item) => (
     item.dayId === dayId &&
     (!item.shift || item.shift === shift) &&
+    (!item.classId || item.classId === classId) &&
     item.periodNumber === periodNumber
   ));
 }

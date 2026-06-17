@@ -550,19 +550,34 @@ output {
   line-height: 1.15;
 }
 
+.constraints-layout {
+  display: grid;
+  grid-template-columns: minmax(620px, 1.25fr) minmax(520px, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.constraints-layout .constraints-active {
+  grid-column: 1 / -1;
+}
+
+.wide-panel {
+  min-width: 0;
+}
+
 .row-edit.constraint-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.7fr) minmax(120px, 0.6fr) 110px 42px;
+  grid-template-columns: minmax(240px, 1.3fr) minmax(150px, 0.8fr) minmax(130px, 0.65fr) 120px 42px;
 }
 
 .row-edit.block-row {
   display: grid;
-  grid-template-columns: minmax(140px, 0.8fr) minmax(120px, 0.7fr) 90px minmax(170px, 1fr) 42px;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(130px, 0.62fr) minmax(150px, 0.72fr) 96px minmax(210px, 1fr) 42px;
 }
 
 .constraint-quick {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.8fr) repeat(3, auto);
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, 0.8fr) repeat(3, minmax(110px, auto));
   gap: 8px;
   align-items: center;
   margin-bottom: 14px;
@@ -679,12 +694,6 @@ output {
   justify-content: flex-start;
   border-color: rgba(142, 223, 199, 0.28);
   color: var(--mint);
-}
-
-.rules-modal {
-  inset: 7vh 8vw;
-  max-width: 980px;
-  margin: auto;
 }
 
 .rules-lead {
@@ -1144,28 +1153,57 @@ output {
   box-shadow: 0 16px 44px rgba(0, 0, 0, 0.4), 0 0 36px rgba(142, 223, 199, 0.28);
 }
 
-.training-panel {
+.modal-backdrop {
   position: fixed;
-  inset: 24px;
+  inset: 0;
   z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(5, 6, 12, 0.66);
+  backdrop-filter: blur(8px);
+  animation: modal-fade 180ms var(--ease) both;
+}
+
+.modal-window {
+  position: relative;
+  width: min(1280px, 100%);
+  max-height: min(92vh, 980px);
   border: 1px solid rgba(231, 191, 103, 0.42);
   border-radius: 8px;
   background:
     linear-gradient(180deg, rgba(36, 34, 53, 0.98), rgba(17, 19, 29, 0.98)),
     repeating-linear-gradient(45deg, rgba(231, 191, 103, 0.08) 0 1px, transparent 1px 28px);
   box-shadow: 0 26px 90px rgba(0, 0, 0, 0.58);
-  padding: 24px;
-  overflow: auto;
+  overflow: hidden;
   animation: modal-in 220ms var(--ease) both;
 }
 
-.training-panel::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: rgba(5, 6, 12, 0.62);
-  backdrop-filter: blur(7px);
+.modal-window.rules-modal {
+  width: min(1080px, 100%);
+}
+
+.modal-window.training-modal {
+  width: min(1380px, 100%);
+}
+
+.modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  width: 42px;
+  min-height: 42px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(17, 19, 29, 0.74);
+}
+
+.training-panel {
+  max-height: min(92vh, 980px);
+  padding: 24px;
+  overflow: auto;
+  padding-right: 70px;
 }
 
 .training-head {
@@ -1408,6 +1446,7 @@ output {
     max-height: 68vh;
   }
   .editor-grid, .row-edit.room-row, .row-edit.class-row, .row-edit.constraint-row, .row-edit.block-row, .constraint-quick, .shift-settings, .period-editor-grid { grid-template-columns: 1fr; }
+  .constraints-layout { grid-template-columns: 1fr; }
   .subject-settings-head, .parallel-grid { grid-template-columns: 1fr; }
   .subject-add-row { grid-template-columns: 1fr; }
   .difficulty-rules-grid { grid-template-columns: 1fr; }
@@ -1427,7 +1466,8 @@ output {
     align-items: stretch;
   }
   .draft-button { width: 100%; }
-  .training-panel { inset: 10px; padding: 16px; }
+  .modal-backdrop { padding: 10px; }
+  .training-panel { padding: 16px; padding-right: 58px; }
   .training-head { flex-direction: column; }
   .training-step { grid-template-columns: 1fr; min-height: auto; }
   .hero-copy .school-name { font-size: clamp(2rem, 10.5vw, 3.1rem); }
@@ -1473,6 +1513,10 @@ output {
   @keyframes rise-in {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes modal-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
   @keyframes modal-in {
     from { opacity: 0; transform: translateY(10px) scale(.985); }
