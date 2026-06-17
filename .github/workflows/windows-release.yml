@@ -35,14 +35,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          $files = @(
-            Get-Item "release\school-scheduler-setup-*.exe",
-            Get-Item "release\school-scheduler-setup-*.exe.blockmap",
-            Get-Item "release\latest.yml"
-          )
+          $installer = (Get-ChildItem "release" -Filter "school-scheduler-setup-*.exe" | Where-Object { $_.Name -notlike "*.blockmap" } | Select-Object -First 1).FullName
+          $blockmap = "$installer.blockmap"
+          $latest = (Get-Item "release\latest.yml").FullName
 
-          if (gh release view $env:TAG_NAME 2>$null) {
-            gh release upload $env:TAG_NAME @($files.FullName) --clobber
-          } else {
-            gh release create $env:TAG_NAME @($files.FullName) --title $env:TAG_NAME --notes "Windows installer for ОЧУ ЦО Интеллект - Расписание."
+          if (-not $installer) { throw "Installer was not found" }
+          if (-not (Test-Path $blockmap)) { throw "Installer blockmap was not found" }
+
+          if (-not (gh release view $env:TAG_NAME 2>$null)) {
+            gh release create $env:TAG_NAME --title $env:TAG_NAME --notes "Windows installer for ОЧУ ЦО Интеллект - Расписание."
           }
+
+          gh release upload $env:TAG_NAME $installer $blockmap $latest --clobber

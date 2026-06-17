@@ -1,6 +1,6 @@
 {
   "name": "school-scheduler",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Desktop-приложение для автоматического создания школьного расписания ОЧУ ЦО Интеллект",
   "author": "ОЧУ ЦО Интеллект",
   "private": true,
