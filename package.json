@@ -1,8 +1,8 @@
 {
-  "name": "school-scheduler",
+  "name": "amanat-scheduler",
   "version": "0.1.4",
-  "description": "Desktop-приложение для автоматического создания школьного расписания ОЧУ ЦО Интеллект",
-  "author": "ОЧУ ЦО Интеллект",
+  "description": "Аманат Расписание — desktop-приложение для автоматического создания школьного расписания",
+  "author": "Латипов Саид Ахмедович",
   "private": true,
   "type": "module",
   "main": "desktop/main.mjs",
@@ -20,8 +20,8 @@
     "test:smoke": "node scripts/smoke.mjs"
   },
   "build": {
-    "appId": "ru.intellect.school.scheduler",
-    "productName": "ОЧУ ЦО Интеллект - Расписание",
+    "appId": "ru.latipov.amanat.scheduler",
+    "productName": "Аманат Расписание",
     "asar": true,
     "directories": {
       "output": "release"
@@ -38,14 +38,14 @@
         "nsis"
       ],
       "icon": "build/icon.ico",
-      "artifactName": "school-scheduler-setup-${version}.${ext}"
+      "artifactName": "amanat-raspisanie-setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "ОЧУ ЦО Интеллект - Расписание"
+      "shortcutName": "Аманат Расписание"
     },
     "publish": [
       {

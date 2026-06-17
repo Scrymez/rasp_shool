@@ -8,6 +8,10 @@ import {
 import './styles.css';
 
 const API = '/api';
+const APP_NAME = 'Аманат Расписание';
+const APP_SUBTITLE = 'Разработка школьного расписания';
+const APP_AUTHOR = 'Латипов Саид Ахмедович';
+const DRAFT_KEY = 'amanat-scheduler-draft';
 const LEVELS = ['НОО', 'ООО', 'СОО'];
 const SHIFTS = [
   { id: 'morning', name: '1 смена', label: 'утро - обед' },
@@ -33,7 +37,7 @@ function App() {
   const [selectedClasses, setSelectedClasses] = useState([]);
   const [weekMode, setWeekMode] = useState('one');
   const [notice, setNotice] = useState('');
-  const [hasDraft, setHasDraft] = useState(() => Boolean(localStorage.getItem('school-scheduler-draft')));
+  const [hasDraft, setHasDraft] = useState(() => Boolean(localStorage.getItem(DRAFT_KEY)));
   const [trainingOpen, setTrainingOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState(null);
   const [runtimeStatus, setRuntimeStatus] = useState(null);
@@ -45,7 +49,7 @@ function App() {
   }
 
   function saveDraft() {
-    localStorage.setItem('school-scheduler-draft', JSON.stringify({
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({
       savedAt: new Date().toISOString(),
       step,
       selectedClasses,
@@ -57,7 +61,7 @@ function App() {
   }
 
   function loadDraft() {
-    const raw = localStorage.getItem('school-scheduler-draft');
+    const raw = localStorage.getItem(DRAFT_KEY);
     if (!raw) {
       setNotice('Черновик не найден');
       return;
@@ -100,8 +104,8 @@ function App() {
       <aside className="sidebar">
         <div className="brand">
           <div>
-            <b>ОЧУ "ЦО Интеллект"</b>
-            <span>Разработка расписания школы</span>
+            <b>{APP_NAME}</b>
+            <span>{APP_SUBTITLE}</span>
           </div>
         </div>
         <nav>
@@ -189,8 +193,8 @@ function Login({ setLogged, setStep, setNotice }) {
     <section className="ritual-panel hero-panel">
       <div className="sigil" aria-hidden="true" />
       <div className="hero-copy">
-        <h2 className="school-name">ОЧУ "ЦО Интеллект"</h2>
-        <p className="school-subtitle">Разработка расписания школы</p>
+        <h2 className="school-name">{APP_NAME}</h2>
+        <p className="school-subtitle">{APP_SUBTITLE}</p>
         <form onSubmit={submit} className="login-row">
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Пароль администратора: admin" />
           <button className="primary"><KeyRound size={18} /> Войти</button>
@@ -819,6 +823,11 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
             <Upload size={17} /> Восстановить backup
             <input type="file" accept=".json" onChange={restore} />
           </label>
+        </div>
+        <div className="manual-teacher">
+          <h3>О приложении</h3>
+          <p className="hint"><b>{APP_NAME}</b></p>
+          <p className="hint">Автор и разработчик: {APP_AUTHOR}</p>
         </div>
         <div className="manual-teacher">
           <h3>Excel-шаблоны</h3>

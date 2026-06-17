@@ -35,7 +35,7 @@ async function createWindow() {
     height: 860,
     minWidth: 1120,
     minHeight: 720,
-    title: 'ОЧУ "ЦО Интеллект" - расписание школы',
+    title: 'Аманат Расписание - разработка школьного расписания',
     icon: path.join(appRoot, 'build', 'icon.png'),
     backgroundColor: '#11131d',
     webPreferences: {
