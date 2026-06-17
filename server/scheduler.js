@@ -200,7 +200,7 @@ function periodInterval(settings, shiftId, periodNumber) {
   const shift = (settings.shifts || []).find((item) => item.id === shiftId);
   let cursor = timeToMinutes(shift?.startsAt || '08:30');
   for (const period of settings.periods) {
-    const start = cursor;
+    const start = period.startsAt?.[shiftId] ? timeToMinutes(period.startsAt[shiftId]) : cursor;
     const end = start + Number(period.duration || 40);
     if (period.number === periodNumber) return { start, end };
     cursor = end + Number(period.breakAfter || 0);

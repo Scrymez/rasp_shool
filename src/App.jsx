@@ -492,10 +492,18 @@ function Teachers({ state, refresh, setNotice }) {
   const [subjectText, setSubjectText] = useState('');
   const [selectedTeacher, setSelectedTeacher] = useState(teacherGroups[0]?.fullName || '');
   const [extraSubjectText, setExtraSubjectText] = useState('');
+  const [advisorRows, setAdvisorRows] = useState([]);
 
   useEffect(() => {
     if (!selectedTeacher && teacherGroups[0]) setSelectedTeacher(teacherGroups[0].fullName);
   }, [teacherGroups, selectedTeacher]);
+
+  useEffect(() => {
+    setAdvisorRows(state.classes.map((schoolClass) => {
+      const advisor = state.classAdvisors?.find((item) => item.classId === schoolClass.id);
+      return { classId: schoolClass.id, teacherId: advisor?.teacherId || '' };
+    }));
+  }, [state.classes, state.classAdvisors]);
 
   async function addTeacher() {
     const subjects = parseSubjectText(subjectText);
@@ -525,6 +533,15 @@ function Teachers({ state, refresh, setNotice }) {
     await api(`/teachers/by-name/${encodeURIComponent(fullName)}`, { method: 'DELETE' });
     await refresh();
     setNotice('Учитель удален');
+  }
+
+  async function saveAdvisors() {
+    await api('/class-advisors', {
+      method: 'POST',
+      body: { advisors: advisorRows.map((row) => ({ classId: row.classId, teacherId: row.teacherId ? Number(row.teacherId) : null })) }
+    });
+    await refresh();
+    setNotice('Классные руководители сохранены');
   }
 
   return (
@@ -557,6 +574,27 @@ function Teachers({ state, refresh, setNotice }) {
             <button onClick={() => removeTeacher(item.fullName)} title="Удалить"><Trash2 size={16} /></button>
           </p>
         )) : <p className="hint">Пока пусто</p>}</div>
+        <div className="manual-teacher">
+          <h3>Классные руководители</h3>
+          <div className="class-advisor-grid">
+            {advisorRows.map((row, index) => {
+              const schoolClass = state.classes.find((item) => item.id === row.classId);
+              return (
+                <React.Fragment key={row.classId}>
+                  <span>{schoolClass ? `${schoolClass.grade}${schoolClass.letter}` : row.classId}</span>
+                  <select value={row.teacherId} onChange={(e) => updateRows(advisorRows, setAdvisorRows, index, 'teacherId', e.target.value)}>
+                    <option value="">Не назначен</option>
+                    {teacherGroups.map((teacher) => {
+                      const first = state.teachers.find((item) => item.fullName === teacher.fullName);
+                      return <option value={first?.id || ''} key={teacher.fullName}>{teacher.fullName}</option>;
+                    })}
+                  </select>
+                </React.Fragment>
+              );
+            })}
+          </div>
+          <button className="primary" onClick={saveAdvisors}><Save size={18} /> Сохранить руководителей</button>
+        </div>
       </div>
     </section>
   );
@@ -703,14 +741,42 @@ function Constraints({ state, refresh, setNotice }) {
 
 function TimeSettings({ state, refresh, setNotice }) {
   const [days, setDays] = useState(state.settings.days);
-  const [periods, setPeriods] = useState(state.settings.periods);
+  const [periods, setPeriods] = useState(() => normalizePeriodsForEditor(state.settings.periods, state.settings.shifts));
   const [shifts, setShifts] = useState(state.settings.shifts || SHIFTS.map((shift) => ({ ...shift, startsAt: shift.id === 'morning' ? '08:30' : '14:00' })));
   const [sanpin, setSanpin] = useState(state.settings.sanpin);
+
   async function save() {
-    await api('/settings', { method: 'POST', body: { days, periods, shifts, sanpin } });
+    await api('/settings', { method: 'POST', body: { days, periods: normalizePeriodsForSave(periods), shifts, sanpin } });
     await refresh();
     setNotice('Неделя и перемены настроены');
   }
+
+  function updatePeriod(index, key, value) {
+    setPeriods(periods.map((period, periodIndex) => periodIndex === index ? { ...period, [key]: value } : period));
+  }
+
+  function updatePeriodStart(index, shiftId, value) {
+    setPeriods(periods.map((period, periodIndex) => periodIndex === index ? {
+      ...period,
+      startsAt: { ...(period.startsAt || {}), [shiftId]: value }
+    } : period));
+  }
+
+  function addPeriod() {
+    const nextNumber = Math.max(0, ...periods.map((period) => Number(period.number) || 0)) + 1;
+    setPeriods([...periods, {
+      number: nextNumber,
+      duration: 40,
+      breakAfter: 10,
+      startsAt: Object.fromEntries(shiftOptions({ settings: { shifts } }).map((shift) => [shift.id, nextPeriodStart(periods, shifts, shift.id)]))
+    }]);
+  }
+
+  function removePeriod(index) {
+    const next = periods.filter((_, periodIndex) => periodIndex !== index).map((period, periodIndex) => ({ ...period, number: periodIndex + 1 }));
+    setPeriods(next);
+  }
+
   return (
     <section className="grid-two">
       <div className="panel">
@@ -726,6 +792,7 @@ function TimeSettings({ state, refresh, setNotice }) {
       </div>
       <div className="panel">
         <PanelTitle icon={MoonStar} title="Уроки и перемены" />
+        <p className="hint">Каждый урок редактируется отдельно: старт 1 и 2 смены, длительность урока, перемена после урока.</p>
         <div className="shift-settings">
           {shifts.map((shift, index) => (
             <label key={shift.id}>
@@ -735,15 +802,23 @@ function TimeSettings({ state, refresh, setNotice }) {
             </label>
           ))}
         </div>
-        {periods.map((period, index) => (
-          <div className="row-edit compact" key={period.number}>
-            <span>{period.number}</span>
-            <span className="time-hint">{periodTime({ periods, shifts }, 'morning', period.number)} / {periodTime({ periods, shifts }, 'afternoon', period.number)}</span>
-            <input type="number" value={period.duration} onChange={(e) => updateRows(periods, setPeriods, index, 'duration', Number(e.target.value))} />
-            <input type="number" value={period.breakAfter} onChange={(e) => updateRows(periods, setPeriods, index, 'breakAfter', Number(e.target.value))} />
-          </div>
-        ))}
-        <button className="primary" onClick={save}><Check size={18} /> Сохранить время</button>
+        <div className="period-editor-grid">
+          <b>Урок</b><b>Старт 1 смена</b><b>Старт 2 смена</b><b>Длит.</b><b>Перем.</b><b></b>
+          {periods.map((period, index) => (
+            <React.Fragment key={`${period.number}-${index}`}>
+              <input type="number" min="1" max="14" value={period.number} onChange={(e) => updatePeriod(index, 'number', Number(e.target.value))} />
+              <input type="time" value={period.startsAt?.morning || periodTime({ periods, shifts }, 'morning', period.number)} onChange={(e) => updatePeriodStart(index, 'morning', e.target.value)} />
+              <input type="time" value={period.startsAt?.afternoon || periodTime({ periods, shifts }, 'afternoon', period.number)} onChange={(e) => updatePeriodStart(index, 'afternoon', e.target.value)} />
+              <input type="number" min="20" max="90" value={period.duration} onChange={(e) => updatePeriod(index, 'duration', Number(e.target.value))} />
+              <input type="number" min="0" max="60" value={period.breakAfter} onChange={(e) => updatePeriod(index, 'breakAfter', Number(e.target.value))} />
+              <button onClick={() => removePeriod(index)} title="Удалить урок"><Trash2 size={16} /></button>
+            </React.Fragment>
+          ))}
+        </div>
+        <div className="segmented">
+          <button onClick={addPeriod}><Plus size={16} /> Добавить урок</button>
+          <button className="primary" onClick={save}><Check size={18} /> Сохранить время</button>
+        </div>
       </div>
       <div className="panel full-span">
         <PanelTitle icon={ShieldCheck} title="СанПиН-нагрузка" />
@@ -752,7 +827,7 @@ function TimeSettings({ state, refresh, setNotice }) {
           {Array.from({ length: 11 }, (_, i) => i + 1).map((grade) => (
             <React.Fragment key={grade}>
               <span>{grade}</span>
-              <input type="number" min="1" max="10" value={sanpin.maxLessonsByGrade[grade] || ''} onChange={(e) => setSanpin(updateNested(sanpin, 'maxLessonsByGrade', grade, Number(e.target.value)))} />
+              <input type="number" min="1" max="14" value={sanpin.maxLessonsByGrade[grade] || ''} onChange={(e) => setSanpin(updateNested(sanpin, 'maxLessonsByGrade', grade, Number(e.target.value)))} />
               <input type="number" min="1" max="60" value={sanpin.maxDailyDifficultyByGrade[grade] || ''} onChange={(e) => setSanpin(updateNested(sanpin, 'maxDailyDifficultyByGrade', grade, Number(e.target.value)))} />
             </React.Fragment>
           ))}
@@ -766,14 +841,6 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [reports, setReports] = useState(null);
-  const [advisorRows, setAdvisorRows] = useState([]);
-
-  useEffect(() => {
-    setAdvisorRows(state.classes.map((schoolClass) => {
-      const advisor = state.classAdvisors?.find((item) => item.classId === schoolClass.id);
-      return { classId: schoolClass.id, teacherId: advisor?.teacherId || '' };
-    }));
-  }, [state.classes, state.classAdvisors]);
 
   async function changePassword() {
     await api('/admin/password', { method: 'POST', body: { currentPassword, newPassword } });
@@ -786,15 +853,6 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
     const data = await api('/reports');
     setReports(data);
     setNotice('Отчеты обновлены');
-  }
-
-  async function saveAdvisors() {
-    await api('/class-advisors', {
-      method: 'POST',
-      body: { advisors: advisorRows.map((row) => ({ classId: row.classId, teacherId: row.teacherId ? Number(row.teacherId) : null })) }
-    });
-    await refresh();
-    setNotice('Классные руководители сохранены');
   }
 
   async function restore(event) {
@@ -849,27 +907,6 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
             </div>
           </div>
         )}
-        <div className="manual-teacher">
-          <h3>Классные руководители</h3>
-          <div className="class-advisor-grid">
-            {advisorRows.map((row, index) => {
-              const schoolClass = state.classes.find((item) => item.id === row.classId);
-              return (
-                <React.Fragment key={row.classId}>
-                  <span>{schoolClass ? `${schoolClass.grade}${schoolClass.letter}` : row.classId}</span>
-                  <select value={row.teacherId} onChange={(e) => updateRows(advisorRows, setAdvisorRows, index, 'teacherId', e.target.value)}>
-                    <option value="">Не назначен</option>
-                    {groupTeachers(state.teachers).map((teacher) => {
-                      const first = state.teachers.find((item) => item.fullName === teacher.fullName);
-                      return <option value={first?.id || ''} key={teacher.fullName}>{teacher.fullName}</option>;
-                    })}
-                  </select>
-                </React.Fragment>
-              );
-            })}
-          </div>
-          <button className="primary" onClick={saveAdvisors}><Save size={18} /> Сохранить руководителей</button>
-        </div>
       </div>
       <div className="panel list-panel">
         <PanelTitle icon={BarChart3} title="Отчеты и журнал" />
@@ -1214,9 +1251,61 @@ function shiftName(state, shiftId) {
   return shift ? shift.name : shiftId;
 }
 
+function normalizePeriodsForEditor(periods = [], shifts = []) {
+  return [...periods]
+    .sort((a, b) => Number(a.number) - Number(b.number))
+    .map((period) => ({
+      number: Number(period.number) || 1,
+      duration: Number(period.duration) || 40,
+      breakAfter: Number(period.breakAfter) || 0,
+      startsAt: {
+        ...(period.startsAt || {}),
+        ...Object.fromEntries((shifts || []).map((shift) => [
+          shift.id,
+          period.startsAt?.[shift.id] || calculatedPeriodStart(periods, shifts, shift.id, Number(period.number) || 1)
+        ]))
+      }
+    }));
+}
+
+function normalizePeriodsForSave(periods = []) {
+  return [...periods]
+    .map((period) => ({
+      number: Number(period.number) || 1,
+      duration: Math.max(1, Number(period.duration) || 40),
+      breakAfter: Math.max(0, Number(period.breakAfter) || 0),
+      startsAt: period.startsAt || {}
+    }))
+    .sort((a, b) => a.number - b.number)
+    .map((period, index) => ({ ...period, number: index + 1 }));
+}
+
+function calculatedPeriodStart(periods = [], shifts = [], shiftId, periodNumber) {
+  const shift = shifts.find((item) => item.id === shiftId) || shifts[0] || { startsAt: '08:30' };
+  let minutes = timeToMinutes(shift.startsAt);
+  for (const period of [...periods].sort((a, b) => Number(a.number) - Number(b.number))) {
+    if (Number(period.number) === Number(periodNumber)) break;
+    minutes += Number(period.duration || 0) + Number(period.breakAfter || 0);
+  }
+  return minutesToTime(minutes);
+}
+
+function nextPeriodStart(periods = [], shifts = [], shiftId) {
+  const sorted = [...periods].sort((a, b) => Number(a.number) - Number(b.number));
+  const last = sorted[sorted.length - 1];
+  if (!last) {
+    const shift = shifts.find((item) => item.id === shiftId) || shifts[0] || { startsAt: shiftId === 'afternoon' ? '14:00' : '08:30' };
+    return shift.startsAt;
+  }
+  const lastStart = last.startsAt?.[shiftId] || calculatedPeriodStart(sorted, shifts, shiftId, last.number);
+  return minutesToTime(timeToMinutes(lastStart) + Number(last.duration || 40) + Number(last.breakAfter || 0));
+}
+
 function periodTime(source, shiftId, periodNumber) {
   const shifts = source.shifts || source.settings?.shifts || [];
   const periods = source.periods || source.settings?.periods || [];
+  const period = periods.find((item) => Number(item.number) === Number(periodNumber));
+  if (period?.startsAt?.[shiftId]) return period.startsAt[shiftId];
   const shift = shifts.find((item) => item.id === shiftId) || shifts[0] || { startsAt: '08:30' };
   let minutes = timeToMinutes(shift.startsAt);
   for (const period of periods) {

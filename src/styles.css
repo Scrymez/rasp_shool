@@ -921,6 +921,29 @@ output {
   color: var(--muted);
 }
 
+.period-editor-grid {
+  display: grid;
+  grid-template-columns: 70px minmax(110px, 1fr) minmax(110px, 1fr) 84px 84px 42px;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.period-editor-grid b {
+  color: var(--gold);
+  font-size: 0.8rem;
+}
+
+.period-editor-grid input {
+  width: 100%;
+}
+
+.period-editor-grid button {
+  min-height: 40px;
+  padding: 0;
+  justify-content: center;
+}
+
 .report-box {
   display: grid;
   gap: 8px;
@@ -1192,7 +1215,7 @@ output {
   .sigil { max-width: 280px; margin: auto; }
   .assignment-table { grid-template-columns: 70px minmax(150px, 1fr); }
   .assignment-table > b:nth-child(3), .assignment-table > b:nth-child(4), .assignment-table > b:nth-child(5) { display: none; }
-  .editor-grid, .row-edit.room-row, .row-edit.constraint-row, .shift-settings { grid-template-columns: 1fr; }
+  .editor-grid, .row-edit.room-row, .row-edit.constraint-row, .shift-settings, .period-editor-grid { grid-template-columns: 1fr; }
   .subject-settings-head, .parallel-grid { grid-template-columns: 1fr; }
   .subject-add-row { grid-template-columns: 1fr; }
   .difficulty-rules-grid { grid-template-columns: 1fr; }

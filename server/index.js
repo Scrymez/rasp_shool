@@ -1031,6 +1031,7 @@ function periodTime(payload, shiftId, periodNumber) {
   const shift = payload.shifts?.find((item) => item.id === shiftId) || payload.shifts?.[0] || { startsAt: '08:30' };
   const period = payload.periods.find((item) => item.number === periodNumber);
   if (!period) return '';
+  if (period.startsAt?.[shiftId]) return period.startsAt[shiftId];
   let minutes = timeToMinutes(shift.startsAt);
   for (const item of payload.periods) {
     if (item.number === periodNumber) break;
