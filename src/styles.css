@@ -475,7 +475,20 @@ output {
 
 .row-edit.constraint-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.7fr) minmax(120px, 0.6fr) 90px;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.7fr) minmax(120px, 0.6fr) 110px 42px;
+}
+
+.row-edit.block-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) minmax(120px, 0.7fr) 90px minmax(170px, 1fr) 42px;
+}
+
+.constraint-quick {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.8fr) repeat(3, auto);
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 14px;
 }
 
 .time-hint {
@@ -1165,7 +1178,7 @@ output {
 
 .class-advisor-grid {
   display: grid;
-  grid-template-columns: minmax(64px, 0.22fr) minmax(180px, 1fr);
+  grid-template-columns: minmax(120px, 0.65fr) minmax(190px, 1fr) minmax(120px, 0.65fr) minmax(120px, 0.65fr) minmax(160px, 1fr) 42px;
   gap: 10px;
   align-items: center;
   max-height: 340px;
@@ -1299,7 +1312,7 @@ output {
     grid-template-columns: 86px 260px 250px 150px 96px;
     max-height: 68vh;
   }
-  .editor-grid, .row-edit.room-row, .row-edit.constraint-row, .shift-settings, .period-editor-grid { grid-template-columns: 1fr; }
+  .editor-grid, .row-edit.room-row, .row-edit.constraint-row, .row-edit.block-row, .constraint-quick, .shift-settings, .period-editor-grid { grid-template-columns: 1fr; }
   .subject-settings-head, .parallel-grid { grid-template-columns: 1fr; }
   .subject-add-row { grid-template-columns: 1fr; }
   .difficulty-rules-grid { grid-template-columns: 1fr; }

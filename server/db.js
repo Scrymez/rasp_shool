@@ -78,6 +78,17 @@ export function migrate() {
       FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
       FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
     );
+    CREATE TABLE IF NOT EXISTS class_advisor_assignments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      class_id INTEGER NOT NULL,
+      teacher_id INTEGER,
+      room_id INTEGER,
+      shift TEXT,
+      note TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE,
+      FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE SET NULL,
+      FOREIGN KEY(room_id) REFERENCES rooms(id) ON DELETE SET NULL
+    );
     CREATE TABLE IF NOT EXISTS teacher_constraints (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       teacher_id INTEGER NOT NULL,
@@ -86,6 +97,13 @@ export function migrate() {
       period_number INTEGER,
       kind TEXT NOT NULL DEFAULT 'unavailable',
       FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS schedule_blocks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      day_id TEXT NOT NULL,
+      shift TEXT,
+      period_number INTEGER NOT NULL,
+      reason TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
@@ -109,6 +127,10 @@ export function migrate() {
   ensureColumn('assignments', 'room_id', 'INTEGER');
   ensureColumn('classes', 'shift', "TEXT NOT NULL DEFAULT 'morning'");
   ensureColumn('teacher_constraints', 'shift', 'TEXT');
+  ensureColumn('class_advisor_assignments', 'room_id', 'INTEGER');
+  ensureColumn('class_advisor_assignments', 'shift', 'TEXT');
+  ensureColumn('class_advisor_assignments', 'note', "TEXT NOT NULL DEFAULT ''");
+  migrateLegacyAdvisors();
   seedSubjects();
   seedSubjectGradeHours();
   seedSettings();
@@ -117,6 +139,15 @@ export function migrate() {
 function ensureColumn(table, column, definition) {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
   if (!columns.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+function migrateLegacyAdvisors() {
+  const existing = db.prepare('SELECT COUNT(*) AS count FROM class_advisor_assignments').get();
+  if (existing.count > 0) return;
+  const legacy = db.prepare('SELECT class_id, teacher_id FROM class_advisors WHERE teacher_id IS NOT NULL').all();
+  if (!legacy.length) return;
+  const stmt = db.prepare('INSERT INTO class_advisor_assignments (class_id, teacher_id, shift, note) VALUES (?, ?, NULL, ?)');
+  runTransaction(() => legacy.forEach((row) => stmt.run(row.class_id, row.teacher_id, 'Перенесено из старого формата')));
 }
 
 function seedSubjects() {
@@ -296,12 +327,14 @@ export function allRooms() {
 
 export function allClassAdvisors() {
   return db.prepare(`
-    SELECT ca.class_id AS classId, ca.teacher_id AS teacherId,
-           c.grade, c.letter, c.level, c.shift,
-           t.full_name AS teacherName
-    FROM class_advisors ca
+    SELECT ca.id, ca.class_id AS classId, ca.teacher_id AS teacherId, ca.room_id AS roomId,
+           ca.shift, ca.note,
+           c.grade, c.letter, c.level, c.shift AS classShift,
+           t.full_name AS teacherName, r.name AS roomName
+    FROM class_advisor_assignments ca
     JOIN classes c ON c.id = ca.class_id
     LEFT JOIN teachers t ON t.id = ca.teacher_id
+    LEFT JOIN rooms r ON r.id = ca.room_id
     ORDER BY c.grade, c.letter
   `).all();
 }
@@ -314,6 +347,14 @@ export function allTeacherConstraints() {
     FROM teacher_constraints tc
     JOIN teachers t ON t.id = tc.teacher_id
     ORDER BY t.full_name, tc.day_id, tc.period_number
+  `).all();
+}
+
+export function allScheduleBlocks() {
+  return db.prepare(`
+    SELECT id, day_id AS dayId, shift, period_number AS periodNumber, reason
+    FROM schedule_blocks
+    ORDER BY day_id, shift, period_number
   `).all();
 }
 

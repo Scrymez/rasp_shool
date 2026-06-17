@@ -6,7 +6,7 @@ const base = 'http://127.0.0.1:4173/api';
 migrate();
 setAdminPassword('admin');
 runTransaction(() => {
-  db.exec('DELETE FROM audit_log; DELETE FROM schedules; DELETE FROM teacher_constraints; DELETE FROM assignments; DELETE FROM class_advisors; DELETE FROM teachers; DELETE FROM rooms; DELETE FROM classes;');
+  db.exec('DELETE FROM audit_log; DELETE FROM schedules; DELETE FROM schedule_blocks; DELETE FROM teacher_constraints; DELETE FROM assignments; DELETE FROM class_advisor_assignments; DELETE FROM class_advisors; DELETE FROM teachers; DELETE FROM rooms; DELETE FROM classes;');
 });
 
 let token = '';
@@ -52,7 +52,11 @@ let boot = await request('/bootstrap');
 const advisorTeacher = boot.teachers.find((item) => item.fullName === 'Иванова Мария Петровна');
 await request('/class-advisors', {
   method: 'POST',
-  body: { advisors: boot.classes.map((item) => ({ classId: item.id, teacherId: advisorTeacher.id })) }
+  body: { advisors: boot.classes.map((item) => ({ classId: item.id, teacherId: advisorTeacher.id, roomId: boot.rooms[0]?.id || null, shift: item.shift, note: 'Smoke' })) }
+});
+await request('/schedule-blocks', {
+  method: 'POST',
+  body: { blocks: [{ dayId: 'mon', shift: '', periodNumber: 1, reason: 'Разговоры о важном' }] }
 });
 boot = await request('/bootstrap');
 const schedule = await request('/generate', { method: 'POST', body: { classIds: boot.classes.map((item) => item.id), weekMode: 'one' } });
@@ -67,6 +71,8 @@ const gridExport = await download(`/export/schedules/${schedule.id}.grid.xlsx`);
 const reportsExport = await download('/reports.xlsx');
 const scheduleTemplate = await download('/templates/schedule.xlsx');
 const teachersTemplate = await download('/templates/teachers.xlsx');
+const classesTemplate = await download('/templates/classes.xlsx');
+const advisorsTemplate = await download('/templates/class-advisors.xlsx');
 
 if (allSubjects().length < 30) throw new Error('ФГОС-предметы не загружены');
 if (!health.ok || health.subjects < 30) throw new Error('Health неверный');
@@ -74,22 +80,26 @@ if (allClasses().length !== 2) throw new Error('Классы не созданы
 if (allTeachers().length !== 2) throw new Error('Учитель/предметы не созданы');
 if (allRooms().length !== 1) throw new Error('Кабинет не создан');
 if (!reports.classRows.length || !reports.teacherRows.length) throw new Error('Отчеты пустые');
-if (!reports.advisorRows.every((item) => item.teacher === 'Иванова Мария Петровна')) throw new Error('Классные руководители не попали в отчеты');
+if (!reports.advisorRows.every((item) => item.teacher === 'Иванова Мария Петровна' && item.room === '101')) throw new Error('Классные руководители не попали в отчеты');
+if (!reports.teacherScheduleRows.length) throw new Error('Расписание учителей не попало в отчеты');
 if (backup.version !== 1) throw new Error('Backup неверный');
 if (pdf.slice(0, 4).toString() !== '%PDF') throw new Error('PDF неверный');
-if (!xlsxText(gridExport.body).includes('Все классы') || !xlsxText(gridExport.body).includes('1 урок')) throw new Error('Сеточный экспорт расписания неверный');
-if (!xlsxText(reportsExport.body).includes('Классные руководители') || !xlsxText(reportsExport.body).includes('Учитель-классы')) throw new Error('Excel-отчеты неверные');
+if (!xlsxText(gridExport.body).includes('Полное расписание') || !xlsxText(gridExport.body).includes('1 урок')) throw new Error('Сеточный экспорт расписания неверный');
+if (!xlsxText(reportsExport.body).includes('Расписание учителей') || !xlsxText(reportsExport.body).includes('Классные руководители')) throw new Error('Excel-отчеты неверные');
 if (scheduleTemplate.body.slice(0, 2).toString() !== 'PK') throw new Error('Шаблон расписания неверный');
 if (teachersTemplate.body.slice(0, 2).toString() !== 'PK') throw new Error('Шаблон учителей неверный');
-if (!xlsxText(scheduleTemplate.body).includes('Формат ячейки') || !xlsxText(scheduleTemplate.body).includes('Все классы')) throw new Error('Шаблон расписания не в виде обычной сетки');
+if (!xlsxText(classesTemplate.body).includes('Шаблон') && classesTemplate.body.slice(0, 2).toString() !== 'PK') throw new Error('Шаблон классов неверный');
+if (advisorsTemplate.body.slice(0, 2).toString() !== 'PK') throw new Error('Шаблон руководителей неверный');
+if (!xlsxText(scheduleTemplate.body).includes('Общее расписание') || !xlsxText(scheduleTemplate.body).includes('Формат ячейки')) throw new Error('Шаблон расписания не в виде общей сетки');
 if (!xlsxText(teachersTemplate.body).includes('Предмет 10')) throw new Error('Шаблон учителей не рассчитан на много предметов');
+if (schedule.schedule.classes['1А'].single.mon[1]) throw new Error('Глобальная блокировка понедельник 1 урок не сработала');
 if (!gridExport.name.includes(encodeURIComponent(`Все-расписание-сеткой-${schedule.id}.xlsx`))) throw new Error('Имя файла сеточного расписания неверное');
 if (!reportsExport.name.includes(encodeURIComponent('Отчеты-расписание.xlsx'))) throw new Error('Имя файла отчетов неверное');
 if (!scheduleTemplate.name.includes(encodeURIComponent('Шаблон-расписания-всей-школы.xlsx'))) throw new Error('Имя шаблона расписания неверное');
 if (!teachersTemplate.name.includes(encodeURIComponent('Шаблон-импорта-учителей.xlsx'))) throw new Error('Имя шаблона учителей неверное');
 
 runTransaction(() => {
-  db.exec('DELETE FROM audit_log; DELETE FROM schedules; DELETE FROM teacher_constraints; DELETE FROM assignments; DELETE FROM class_advisors; DELETE FROM teachers; DELETE FROM rooms; DELETE FROM classes;');
+  db.exec('DELETE FROM audit_log; DELETE FROM schedules; DELETE FROM schedule_blocks; DELETE FROM teacher_constraints; DELETE FROM assignments; DELETE FROM class_advisor_assignments; DELETE FROM class_advisors; DELETE FROM teachers; DELETE FROM rooms; DELETE FROM classes;');
 });
 
 console.log(JSON.stringify({ ok: true, subjects: allSubjects().length, classes: allClasses().length, teachers: allTeachers().length, rooms: allRooms().length }));

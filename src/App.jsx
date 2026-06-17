@@ -341,6 +341,10 @@ function Classes({ state, refresh, setNotice }) {
     <section className="grid-two">
       <div className="panel">
         <PanelTitle icon={School} title="Создать классы" />
+        <div className="segmented">
+          <FileUpload label="Импорт классов" endpoint="/import/classes" refresh={refresh} setNotice={setNotice} />
+          <button onClick={() => downloadFile('/templates/classes.xlsx')}><FileSpreadsheet size={18} /> Шаблон классов</button>
+        </div>
         <div className="segmented">{LEVELS.map((level) => <button key={level} onClick={() => addLevel(level)}><Plus size={16} /> {level}</button>)}</div>
         {rows.map((row, index) => (
           <div className="row-edit" key={index}>
@@ -524,10 +528,13 @@ function Teachers({ state, refresh, setNotice }) {
   }, [teacherGroups, selectedTeacher]);
 
   useEffect(() => {
-    setAdvisorRows(state.classes.map((schoolClass) => {
-      const advisor = state.classAdvisors?.find((item) => item.classId === schoolClass.id);
-      return { classId: schoolClass.id, teacherId: advisor?.teacherId || '' };
-    }));
+    setAdvisorRows((state.classAdvisors || []).map((advisor) => ({
+      classId: advisor.classId,
+      teacherId: advisor.teacherId || '',
+      roomId: advisor.roomId || '',
+      shift: advisor.shift || '',
+      note: advisor.note || ''
+    })));
   }, [state.classes, state.classAdvisors]);
 
   async function addTeacher() {
@@ -563,10 +570,20 @@ function Teachers({ state, refresh, setNotice }) {
   async function saveAdvisors() {
     await api('/class-advisors', {
       method: 'POST',
-      body: { advisors: advisorRows.map((row) => ({ classId: row.classId, teacherId: row.teacherId ? Number(row.teacherId) : null })) }
+      body: { advisors: advisorRows.map((row) => ({
+        classId: Number(row.classId),
+        teacherId: row.teacherId ? Number(row.teacherId) : null,
+        roomId: row.roomId ? Number(row.roomId) : null,
+        shift: row.shift || '',
+        note: row.note || ''
+      })) }
     });
     await refresh();
     setNotice('Классные руководители сохранены');
+  }
+
+  function addAdvisorRow() {
+    setAdvisorRows([...advisorRows, { classId: state.classes[0]?.id || '', teacherId: '', roomId: '', shift: '', note: '' }]);
   }
 
   return (
@@ -601,12 +618,17 @@ function Teachers({ state, refresh, setNotice }) {
         )) : <p className="hint">Пока пусто</p>}</div>
         <div className="manual-teacher">
           <h3>Классные руководители</h3>
+          <div className="segmented">
+            <FileUpload label="Импорт руководителей" endpoint="/import/class-advisors" refresh={refresh} setNotice={setNotice} />
+            <button onClick={() => downloadFile('/templates/class-advisors.xlsx')}><FileSpreadsheet size={18} /> Шаблон руководителей</button>
+          </div>
           <div className="class-advisor-grid">
             {advisorRows.map((row, index) => {
-              const schoolClass = state.classes.find((item) => item.id === row.classId);
               return (
-                <React.Fragment key={row.classId}>
-                  <span>{schoolClass ? `${schoolClass.grade}${schoolClass.letter}` : row.classId}</span>
+                <React.Fragment key={`${row.classId}-${index}`}>
+                  <select value={row.classId} onChange={(e) => updateRows(advisorRows, setAdvisorRows, index, 'classId', e.target.value)}>
+                    {state.classes.map((schoolClass) => <option value={schoolClass.id} key={schoolClass.id}>{schoolClass.grade}{schoolClass.letter} · {shiftName(state, schoolClass.shift)}</option>)}
+                  </select>
                   <select value={row.teacherId} onChange={(e) => updateRows(advisorRows, setAdvisorRows, index, 'teacherId', e.target.value)}>
                     <option value="">Не назначен</option>
                     {teacherGroups.map((teacher) => {
@@ -614,10 +636,21 @@ function Teachers({ state, refresh, setNotice }) {
                       return <option value={first?.id || ''} key={teacher.fullName}>{teacher.fullName}</option>;
                     })}
                   </select>
+                  <select value={row.roomId || ''} onChange={(e) => updateRows(advisorRows, setAdvisorRows, index, 'roomId', e.target.value)}>
+                    <option value="">Кабинет</option>
+                    {state.rooms.map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}
+                  </select>
+                  <select value={row.shift || ''} onChange={(e) => updateRows(advisorRows, setAdvisorRows, index, 'shift', e.target.value)}>
+                    <option value="">Смена класса</option>
+                    {shiftOptions(state).map((shift) => <option value={shift.id} key={shift.id}>{shift.name}</option>)}
+                  </select>
+                  <input value={row.note || ''} onChange={(e) => updateRows(advisorRows, setAdvisorRows, index, 'note', e.target.value)} placeholder="Примечание" />
+                  <button onClick={() => setAdvisorRows(advisorRows.filter((_, rowIndex) => rowIndex !== index))} title="Удалить"><Trash2 size={16} /></button>
                 </React.Fragment>
               );
             })}
           </div>
+          <button onClick={addAdvisorRow}><Plus size={18} /> Добавить строку</button>
           <button className="primary" onClick={saveAdvisors}><Save size={18} /> Сохранить руководителей</button>
         </div>
       </div>
@@ -720,25 +753,98 @@ function Assignments({ state, refresh, setNotice }) {
 
 function Constraints({ state, refresh, setNotice }) {
   const [rows, setRows] = useState(state.teacherConstraints.length ? state.teacherConstraints : []);
+  const [blocks, setBlocks] = useState(state.scheduleBlocks || []);
   useEffect(() => setRows(state.teacherConstraints), [state.teacherConstraints]);
+  useEffect(() => setBlocks(state.scheduleBlocks || []), [state.scheduleBlocks]);
   async function save() {
-    await api('/teacher-constraints', {
-      method: 'POST',
-      body: { constraints: rows.map((row) => ({ ...row, periodNumber: row.periodNumber ? Number(row.periodNumber) : null })) }
-    });
+    await Promise.all([
+      api('/teacher-constraints', {
+        method: 'POST',
+        body: { constraints: rows.map((row) => ({ ...row, teacherId: Number(row.teacherId), periodNumber: row.periodNumber ? Number(row.periodNumber) : null })) }
+      }),
+      api('/schedule-blocks', {
+        method: 'POST',
+        body: { blocks: blocks.map((row) => ({ ...row, periodNumber: Number(row.periodNumber) || 1 })) }
+      })
+    ]);
     await refresh();
-    setNotice('Ограничения учителей сохранены');
+    setNotice('Ограничения сохранены');
+  }
+  function addTeacherFromPeriod(teacherId, startPeriod, dayId = '') {
+    const days = dayId ? state.settings.days.filter((day) => day.id === dayId) : state.settings.days.filter((day) => day.enabled);
+    const periods = state.settings.periods.filter((period) => period.number < Number(startPeriod));
+    const created = days.flatMap((day) => periods.map((period) => ({
+      teacherId,
+      dayId: day.id,
+      shift: '',
+      periodNumber: period.number,
+      kind: 'unavailable'
+    })));
+    setRows([...rows, ...created]);
+  }
+  function addTeacherDayOff(teacherId, dayId) {
+    setRows([...rows, { teacherId, dayId, shift: '', periodNumber: null, kind: 'unavailable' }]);
+  }
+  function addTalksBlock() {
+    setBlocks([...blocks, { dayId: 'mon', shift: '', periodNumber: 1, reason: 'Разговоры о важном' }]);
   }
   return (
     <section className="grid-two">
       <div className="panel">
+        <PanelTitle icon={ShieldCheck} title="Блокировка уроков школы" />
+        <p className="hint">Здесь блокируются слоты для всех классов. Пример: понедельник, 1 урок, Разговоры о важном.</p>
+        <div className="segmented">
+          <button onClick={addTalksBlock}><Plus size={16} /> Разговоры о важном</button>
+          <button onClick={() => setBlocks([...blocks, { dayId: 'mon', shift: '', periodNumber: 1, reason: '' }])}><Plus size={16} /> Добавить блокировку</button>
+        </div>
+        {blocks.map((row, index) => (
+          <div className="row-edit block-row" key={index}>
+            <select value={row.dayId || 'mon'} onChange={(e) => updateRows(blocks, setBlocks, index, 'dayId', e.target.value)}>
+              {state.settings.days.map((day) => <option value={day.id} key={day.id}>{day.name}</option>)}
+            </select>
+            <select value={row.shift || ''} onChange={(e) => updateRows(blocks, setBlocks, index, 'shift', e.target.value)}>
+              <option value="">Обе смены</option>
+              {shiftOptions(state).map((shift) => <option value={shift.id} key={shift.id}>{shift.name}</option>)}
+            </select>
+            <input type="number" min="1" placeholder="Урок" value={row.periodNumber || 1} onChange={(e) => updateRows(blocks, setBlocks, index, 'periodNumber', Number(e.target.value))} />
+            <input value={row.reason || ''} onChange={(e) => updateRows(blocks, setBlocks, index, 'reason', e.target.value)} placeholder="Причина" />
+            <button onClick={() => setBlocks(blocks.filter((_, rowIndex) => rowIndex !== index))}><Trash2 size={16} /></button>
+          </div>
+        ))}
+      </div>
+      <div className="panel">
         <PanelTitle icon={ShieldCheck} title="Ограничения учителей" />
-        <p className="hint">Пустой урок означает недоступен весь день. Генератор пропустит эти слоты.</p>
+        <p className="hint">Можно запретить весь день, конкретный урок или быстро создать правило “учитель работает с 3/4 урока”.</p>
+        <div className="constraint-quick">
+          <select id="quickTeacher">
+            <option value="">Учитель</option>
+            {state.teachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.fullName}</option>)}
+          </select>
+          <select id="quickDay">
+            <option value="">Все учебные дни</option>
+            {state.settings.days.map((day) => <option value={day.id} key={day.id}>{day.name}</option>)}
+          </select>
+          <button onClick={() => {
+            const teacherId = Number(document.getElementById('quickTeacher')?.value || 0);
+            const dayId = document.getElementById('quickDay')?.value || '';
+            if (teacherId) addTeacherFromPeriod(teacherId, 3, dayId);
+          }}>С 3 урока</button>
+          <button onClick={() => {
+            const teacherId = Number(document.getElementById('quickTeacher')?.value || 0);
+            const dayId = document.getElementById('quickDay')?.value || '';
+            if (teacherId) addTeacherFromPeriod(teacherId, 4, dayId);
+          }}>С 4 урока</button>
+          <button onClick={() => {
+            const teacherId = Number(document.getElementById('quickTeacher')?.value || 0);
+            const dayId = document.getElementById('quickDay')?.value || 'mon';
+            if (teacherId) addTeacherDayOff(teacherId, dayId);
+          }}>Выходной</button>
+        </div>
         {rows.map((row, index) => (
           <div className="row-edit constraint-row" key={index}>
             <select value={row.teacherId || ''} onChange={(e) => updateRows(rows, setRows, index, 'teacherId', Number(e.target.value))}>
               <option value="">Учитель</option>
-              {state.teachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.fullName}</option>)}
+              {uniqueTeachersByName(state.teachers).map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.fullName}</option>)}
             </select>
             <select value={row.dayId || 'mon'} onChange={(e) => updateRows(rows, setRows, index, 'dayId', e.target.value)}>
               {state.settings.days.map((day) => <option value={day.id} key={day.id}>{day.name}</option>)}
@@ -747,19 +853,26 @@ function Constraints({ state, refresh, setNotice }) {
               <option value="">Обе смены</option>
               {shiftOptions(state).map((shift) => <option value={shift.id} key={shift.id}>{shift.name}</option>)}
             </select>
-            <input type="number" min="1" placeholder="Урок" value={row.periodNumber || ''} onChange={(e) => updateRows(rows, setRows, index, 'periodNumber', e.target.value)} />
+            <input type="number" min="1" placeholder="Урок или пусто" value={row.periodNumber || ''} onChange={(e) => updateRows(rows, setRows, index, 'periodNumber', e.target.value)} />
+            <button onClick={() => setRows(rows.filter((_, rowIndex) => rowIndex !== index))}><Trash2 size={16} /></button>
           </div>
         ))}
         <div className="segmented">
-          <button onClick={() => setRows([...rows, { teacherId: state.teachers[0]?.id || 0, dayId: 'mon', shift: '', periodNumber: null, kind: 'unavailable' }])}><Plus size={16} /> Добавить</button>
+          <button onClick={() => setRows([...rows, { teacherId: uniqueTeachersByName(state.teachers)[0]?.id || 0, dayId: 'mon', shift: '', periodNumber: null, kind: 'unavailable' }])}><Plus size={16} /> Добавить</button>
           <button className="primary" onClick={save}><Save size={18} /> Сохранить ограничения</button>
         </div>
       </div>
-      <ListPanel title="Активные запреты" items={rows.map((item) => {
-        const teacher = state.teachers.find((row) => row.id === item.teacherId);
-        const day = state.settings.days.find((row) => row.id === item.dayId);
-        return `${teacher?.fullName || 'Учитель'} · ${day?.name || item.dayId} · ${item.shift ? shiftName(state, item.shift) : 'обе смены'} · ${item.periodNumber || 'весь день'}`;
-      })} />
+      <ListPanel title="Активные запреты" items={[
+        ...blocks.map((item) => {
+          const day = state.settings.days.find((row) => row.id === item.dayId);
+          return `${day?.name || item.dayId} · ${item.shift ? shiftName(state, item.shift) : 'обе смены'} · ${item.periodNumber} урок · ${item.reason || 'блокировка'}`;
+        }),
+        ...rows.map((item) => {
+          const teacher = state.teachers.find((row) => row.id === Number(item.teacherId));
+          const day = state.settings.days.find((row) => row.id === item.dayId);
+          return `${teacher?.fullName || 'Учитель'} · ${day?.name || item.dayId} · ${item.shift ? shiftName(state, item.shift) : 'обе смены'} · ${item.periodNumber || 'весь день'}`;
+        })
+      ]} />
     </section>
   );
 }
@@ -931,6 +1044,8 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
           <h3>Excel-шаблоны</h3>
           <button className="export-link" onClick={() => downloadTemplate('/templates/schedule.xlsx')}><FileSpreadsheet size={18} /> Шаблон расписания</button>
           <button className="export-link" onClick={() => downloadTemplate('/templates/teachers.xlsx')}><Users size={18} /> Шаблон импорта учителей</button>
+          <button className="export-link" onClick={() => downloadTemplate('/templates/classes.xlsx')}><School size={18} /> Шаблон импорта классов</button>
+          <button className="export-link" onClick={() => downloadTemplate('/templates/class-advisors.xlsx')}><Users size={18} /> Шаблон руководителей</button>
         </div>
         {runtimeStatus && (
           <div className="manual-teacher">
@@ -973,8 +1088,13 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
             />
             <h3>Классные руководители</h3>
             <ReportTable
-              headers={['Класс', 'Классный руководитель']}
-              rows={reports.advisorRows.map((row) => [row.className, row.teacher || 'Не назначен'])}
+              headers={['Класс', 'Уровень', 'Смена', 'Классный руководитель', 'Кабинет', 'Примечание']}
+              rows={reports.advisorRows.map((row) => [row.className, row.level, row.shift, row.teacher || 'Не назначен', row.room, row.note])}
+            />
+            <h3>Расписание одного учителя</h3>
+            <ReportTable
+              headers={['Учитель', 'Класс', 'Смена', 'Неделя', 'День', 'Урок', 'Время', 'Предмет', 'Кабинет']}
+              rows={(reports.teacherScheduleRows || []).map((row) => [row.teacher, row.className, row.shift, row.week, row.day, row.period, row.time, row.subject, row.room])}
             />
             <h3>Кабинеты</h3>
             <ReportTable

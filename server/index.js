@@ -7,7 +7,7 @@ import PDFDocument from 'pdfkit';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { z } from 'zod';
 import {
-  allAssignments, allClasses, allRooms, allSubjects, allTeacherConstraints,
+  allAssignments, allClasses, allRooms, allScheduleBlocks, allSubjects, allTeacherConstraints,
   allTeachers, allAuditLog, allClassAdvisors, audit, db, ensureAdminPasswordHash,
   json, migrate, runTransaction, setAdminPassword, verifyAdminPassword
 } from './db.js';
@@ -80,6 +80,7 @@ app.get('/api/bootstrap', (_req, res) => {
     rooms: allRooms(),
     classAdvisors: allClassAdvisors(),
     teacherConstraints: allTeacherConstraints(),
+    scheduleBlocks: allScheduleBlocks(),
     auditLog: allAuditLog(),
     assignments: allAssignments(),
     settings: { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), sanpin: json.get('sanpin') },
@@ -104,18 +105,52 @@ app.post('/api/classes', (req, res) => {
   res.json({ classes: allClasses(), assignments: allAssignments() });
 });
 
+app.post('/api/import/classes', async (req, res) => {
+  const rows = await rowsFromDataUrl(req.body.dataUrl);
+  const classes = rows.slice(1).map(classRowFromImport).filter(Boolean);
+  const stmt = db.prepare(`
+    INSERT INTO classes (level, grade, letter, shift) VALUES (?, ?, ?, ?)
+    ON CONFLICT(grade, letter) DO UPDATE SET level = excluded.level, shift = excluded.shift
+  `);
+  runTransaction(() => classes.forEach((row) => stmt.run(row.level, row.grade, row.letter, row.shift)));
+  autoBindSubjectsToClasses();
+  audit('import', 'classes', { count: classes.length });
+  res.json({ imported: classes.length, classes: allClasses(), assignments: allAssignments() });
+});
+
 app.post('/api/class-advisors', (req, res) => {
   const rows = z.array(z.object({
     classId: z.number().int(),
-    teacherId: z.number().int().nullable().optional()
+    teacherId: z.number().int().nullable().optional(),
+    roomId: z.number().int().nullable().optional(),
+    shift: z.enum(['', 'morning', 'afternoon']).default(''),
+    note: z.string().default('')
   })).parse(req.body.advisors || []);
   const stmt = db.prepare(`
-    INSERT INTO class_advisors (class_id, teacher_id) VALUES (?, ?)
-    ON CONFLICT(class_id) DO UPDATE SET teacher_id = excluded.teacher_id
+    INSERT INTO class_advisor_assignments (class_id, teacher_id, room_id, shift, note)
+    VALUES (?, ?, ?, ?, ?)
   `);
-  runTransaction(() => rows.forEach((row) => stmt.run(row.classId, row.teacherId || null)));
+  db.exec('DELETE FROM class_advisor_assignments');
+  runTransaction(() => rows.forEach((row) => {
+    if (row.classId) stmt.run(row.classId, row.teacherId || null, row.roomId || null, row.shift || null, row.note || '');
+  }));
   audit('upsert', 'class-advisors', { count: rows.length });
   res.json({ classAdvisors: allClassAdvisors() });
+});
+
+app.post('/api/import/class-advisors', async (req, res) => {
+  const rows = await rowsFromDataUrl(req.body.dataUrl);
+  const classes = allClasses();
+  const teachers = allTeachers();
+  const rooms = allRooms();
+  const advisors = rows.slice(1).map((row) => advisorRowFromImport(row, classes, teachers, rooms)).filter(Boolean);
+  const stmt = db.prepare(`
+    INSERT INTO class_advisor_assignments (class_id, teacher_id, room_id, shift, note)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  runTransaction(() => advisors.forEach((row) => stmt.run(row.classId, row.teacherId, row.roomId, row.shift, row.note)));
+  audit('import', 'class-advisors', { count: advisors.length });
+  res.json({ imported: advisors.length, classAdvisors: allClassAdvisors() });
 });
 
 app.delete('/api/classes/:id', (req, res) => {
@@ -227,11 +262,28 @@ app.get('/api/templates/teachers.xlsx', (_req, res) => {
   ]);
 });
 
+app.get('/api/templates/classes.xlsx', (_req, res) => {
+  const headers = ['Уровень', 'Класс', 'Литера', 'Смена'];
+  sendXlsx(res, 'Шаблон-импорта-классов.xlsx', [
+    { name: 'Классы', rows: [headers, ...Array.from({ length: 120 }, () => ['', '', '', ''])] },
+    { name: 'Пример', rows: [headers, ['НОО', 1, 'А', '1 смена'], ['ООО', 5, 'А', '2 смена'], ['СОО', 10, 'А', '1 смена']] }
+  ]);
+});
+
+app.get('/api/templates/class-advisors.xlsx', (_req, res) => {
+  const headers = ['Класс', 'Классный руководитель', 'Кабинет', 'Смена', 'Примечание'];
+  sendXlsx(res, 'Шаблон-классных-руководителей.xlsx', [
+    { name: 'Руководители', rows: [headers, ...Array.from({ length: 200 }, () => ['', '', '', '', ''])] },
+    { name: 'Пример', rows: [headers, ['1А', 'Иванова Мария Петровна', '101', '1 смена', 'Основной руководитель'], ['1А', 'Петров Сергей Иванович', '102', '2 смена', 'Вторая смена']] }
+  ]);
+});
+
 app.get('/api/templates/schedule.xlsx', (_req, res) => {
   const settings = { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts') };
   const classes = allClasses();
   const scheduleClasses = classes.length ? classes : defaultTemplateClasses();
   const sheets = [
+    { name: 'Общее расписание', rows: fullScheduleTemplateRows(settings, scheduleClasses) },
     { name: 'Все классы', rows: scheduleIndexRows(settings, scheduleClasses) },
     ...scheduleClasses.map((schoolClass) => ({
       name: safeSheet(classKey(schoolClass)),
@@ -367,6 +419,20 @@ app.post('/api/teacher-constraints', (req, res) => {
   res.json({ teacherConstraints: allTeacherConstraints() });
 });
 
+app.post('/api/schedule-blocks', (req, res) => {
+  const rows = z.array(z.object({
+    dayId: z.string().min(1),
+    shift: z.enum(['', 'morning', 'afternoon']).default(''),
+    periodNumber: z.number().int().min(1),
+    reason: z.string().default('')
+  })).parse(req.body.blocks || []);
+  db.exec('DELETE FROM schedule_blocks');
+  const stmt = db.prepare('INSERT INTO schedule_blocks (day_id, shift, period_number, reason) VALUES (?, ?, ?, ?)');
+  runTransaction(() => rows.forEach((row) => stmt.run(row.dayId, row.shift || null, row.periodNumber, row.reason || '')));
+  audit('replace', 'schedule-blocks', { count: rows.length });
+  res.json({ scheduleBlocks: allScheduleBlocks() });
+});
+
 app.post('/api/assignments', (req, res) => {
   const rows = z.array(z.object({
     id: z.number().optional(),
@@ -409,7 +475,8 @@ app.post('/api/generate', (req, res) => {
       periods: json.get('periods'),
       shifts: json.get('shifts'),
       sanpin: json.get('sanpin'),
-      teacherConstraints: allTeacherConstraints()
+      teacherConstraints: allTeacherConstraints(),
+      scheduleBlocks: allScheduleBlocks()
     },
     classIds: body.classIds,
     weekMode: body.weekMode
@@ -579,8 +646,10 @@ app.get('/api/backup.json', (_req, res) => {
     teachers: db.prepare('SELECT * FROM teachers').all(),
     rooms: db.prepare('SELECT * FROM rooms').all(),
     classAdvisors: db.prepare('SELECT * FROM class_advisors').all(),
+    classAdvisorAssignments: db.prepare('SELECT * FROM class_advisor_assignments').all(),
     assignments: db.prepare('SELECT * FROM assignments').all(),
     teacherConstraints: db.prepare('SELECT * FROM teacher_constraints').all(),
+    scheduleBlocks: db.prepare('SELECT * FROM schedule_blocks').all(),
     settings: db.prepare('SELECT * FROM settings').all(),
     schedules: db.prepare('SELECT * FROM schedules').all()
   };
@@ -843,14 +912,14 @@ function weekLabel(week) {
 }
 
 function classNameSort(a, b) {
-  const left = parseClassName(typeof a === 'string' ? a : a.className);
-  const right = parseClassName(typeof b === 'string' ? b : b.className);
+  const left = parseClassName(typeof a === 'string' ? a : a.className) || { grade: 0, letter: '' };
+  const right = parseClassName(typeof b === 'string' ? b : b.className) || { grade: 0, letter: '' };
   return left.grade - right.grade || left.letter.localeCompare(right.letter, 'ru');
 }
 
 function parseClassName(value) {
-  const match = String(value || '').match(/^(\d+)(.*)$/);
-  return { grade: Number(match?.[1] || 0), letter: match?.[2] || '' };
+  const match = String(value || '').trim().toUpperCase().match(/^(\d{1,2})\s*([А-ЯA-Z]?)$/);
+  return match ? { grade: Number(match[1]), letter: match[2] || '' } : null;
 }
 
 function classKey(item) {
@@ -861,6 +930,40 @@ function teacherRowsFromImport(row) {
   const fullName = String(row[0] || '').trim();
   const subjects = row.slice(1).flatMap((value) => split(value));
   return subjects.map((subjectName) => ({ fullName, subjectName }));
+}
+
+function classRowFromImport(row) {
+  const level = String(row[0] || '').trim().toUpperCase();
+  const parsed = parseClassName(row[1]);
+  const grade = Number(row[1]) || parsed?.grade;
+  const letter = String(row[2] || parsed?.letter || '').trim().toUpperCase();
+  const shift = shiftIdFromText(row[3]);
+  if (!['НОО', 'ООО', 'СОО'].includes(level) || !grade || !letter) return null;
+  return { level, grade, letter, shift };
+}
+
+function advisorRowFromImport(row, classes, teachers, rooms) {
+  const parsed = parseClassName(row[0]);
+  if (!parsed) return null;
+  const schoolClass = classes.find((item) => Number(item.grade) === parsed.grade && same(item.letter, parsed.letter));
+  if (!schoolClass) return null;
+  const teacherName = String(row[1] || '').trim();
+  const teacher = teachers.find((item) => same(item.fullName, teacherName));
+  const roomName = String(row[2] || '').trim();
+  const room = rooms.find((item) => same(item.name, roomName));
+  return {
+    classId: schoolClass.id,
+    teacherId: teacher?.id || null,
+    roomId: room?.id || null,
+    shift: shiftIdFromText(row[3]) || schoolClass.shift || null,
+    note: String(row[4] || '').trim()
+  };
+}
+
+function shiftIdFromText(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (text.includes('2') || text.includes('втор') || text.includes('afternoon')) return 'afternoon';
+  return 'morning';
 }
 
 function isTeacherHeader(row) {
@@ -897,6 +1000,19 @@ function scheduleIndexRows(settings, classes) {
   return rows;
 }
 
+function fullScheduleTemplateRows(settings, classes) {
+  const rows = [
+    ['Класс', 'Смена', 'День', ...settings.periods.map((period) => `${period.number} урок`)],
+    ['Формат ячейки', 'Предмет; Учитель; Кабинет; Сложность', '', ...settings.periods.map((period) => `${periodTime(settings, 'morning', period.number)} / ${period.duration} мин`)]
+  ];
+  const activeDays = settings.days.filter((item) => item.enabled);
+  for (const schoolClass of classes) {
+    const shiftId = schoolClass.shift || 'morning';
+    for (const day of activeDays) rows.push([classKey(schoolClass), shiftLabel(settings, shiftId), day.name, ...settings.periods.map(() => '')]);
+  }
+  return rows;
+}
+
 function classScheduleTemplateRows(settings, schoolClass) {
   const shiftId = schoolClass.shift || 'morning';
   const className = classKey(schoolClass);
@@ -915,6 +1031,10 @@ function classScheduleTemplateRows(settings, schoolClass) {
 
 function scheduleGridSheets(payload) {
   const sheets = [
+    {
+      name: 'Полное расписание',
+      rows: fullScheduleGridRows(payload)
+    },
     {
       name: 'Все классы',
       rows: [['Класс', 'Смена', 'Неделя', 'Лист']].concat(Object.entries(payload.classes).flatMap(([className, weeks]) => (
@@ -935,6 +1055,29 @@ function scheduleGridSheets(payload) {
     }
   }
   return sheets;
+}
+
+function fullScheduleGridRows(payload) {
+  const rows = [['Класс', 'Смена', 'Неделя', 'День', ...payload.periods.map((period) => `${period.number} урок`)]];
+  for (const [className, weeks] of Object.entries(payload.classes)) {
+    const shift = payload.classMeta?.[className]?.shift || 'morning';
+    for (const [week, grid] of Object.entries(weeks)) {
+      for (const day of payload.days) {
+        rows.push([
+          className,
+          shiftLabel(payload, shift),
+          weekLabel(week),
+          day.name,
+          ...payload.periods.map((period) => {
+            const cell = grid[day.id]?.[period.number];
+            if (!cell) return '';
+            return [cell.subject, cell.teacher, cell.room, cell.difficulty ? `сложность ${cell.difficulty}` : ''].filter(Boolean).join('\n');
+          })
+        ]);
+      }
+    }
+  }
+  return rows;
 }
 
 function classScheduleGridRows(payload, className, shift, week, grid) {
@@ -991,6 +1134,8 @@ function scheduleFromRows(rows) {
   if (Object.keys(payload.classes).length) return payload;
 
   const header = headerMap(rows[0] || []);
+  const wideParsed = fillScheduleFromWideRows(payload, rows, header);
+  if (wideParsed) return payload;
   for (const row of rows.slice(1)) {
     const className = valueByHeader(row, header, 'класс', 0);
     const shiftName = valueByHeader(row, header, 'смена', null);
@@ -1009,6 +1154,34 @@ function scheduleFromRows(rows) {
     payload.classes[className].single[day.id][Number(periodNumber)] = { subject: subject || '', teacher: teacher || '', room: room || '', difficulty: Number.isFinite(difficulty) ? difficulty : 3 };
   }
   return payload;
+}
+
+function fillScheduleFromWideRows(payload, rows, header) {
+  const classIndex = header.get('класс');
+  const dayIndex = header.get('день');
+  const shiftIndex = header.get('смена');
+  if (classIndex == null || dayIndex == null) return false;
+  const periodColumns = [];
+  for (const [name, index] of header.entries()) {
+    const match = name.match(/^(\d+)\s*урок/);
+    if (match) periodColumns.push({ number: Number(match[1]), index });
+  }
+  if (!periodColumns.length) return false;
+  for (const row of rows.slice(1)) {
+    const className = String(row[classIndex] || '').trim();
+    const dayName = String(row[dayIndex] || '').trim();
+    if (!className || same(className, 'Формат ячейки') || !dayName) continue;
+    const day = payload.days.find((item) => item.name === dayName);
+    if (!day) continue;
+    payload.classes[className] ||= { single: {} };
+    payload.classes[className].single[day.id] ||= {};
+    payload.classMeta[className] ||= { shift: shiftIdFromLabel(payload, row[shiftIndex]) || 'morning' };
+    for (const column of periodColumns) {
+      const cell = parseTemplateLessonCell(row[column.index]);
+      if (cell) payload.classes[className].single[day.id][column.number] = cell;
+    }
+  }
+  return Object.keys(payload.classes).length > 0;
 }
 
 function parseTemplateLessonCell(value) {
@@ -1166,9 +1339,21 @@ function buildReports({ assignments, teachers, rooms, classes, classAdvisors, la
 
   const advisorRows = classes.map((schoolClass) => {
     const className = `${schoolClass.grade}${schoolClass.letter}`;
-    const advisor = classAdvisors.find((item) => item.classId === schoolClass.id);
-    return { classId: schoolClass.id, className, teacherId: advisor?.teacherId || null, teacher: advisor?.teacherName || '' };
-  });
+    const advisors = classAdvisors.filter((item) => item.classId === schoolClass.id);
+    if (!advisors.length) {
+      return [{ classId: schoolClass.id, className, level: schoolClass.level, shift: shiftLabel({ shifts: json.get('shifts') }, schoolClass.shift), teacherId: null, teacher: '', room: '', note: '' }];
+    }
+    return advisors.map((advisor) => ({
+      classId: schoolClass.id,
+      className,
+      level: schoolClass.level,
+      shift: shiftLabel({ shifts: json.get('shifts') }, advisor.shift || schoolClass.shift),
+      teacherId: advisor.teacherId || null,
+      teacher: advisor.teacherName || '',
+      room: advisor.roomName || '',
+      note: advisor.note || ''
+    }));
+  }).flat();
 
   const unassigned = assignments.filter((item) => !item.teacherName).map((item) => `${item.grade}${item.letter}: ${item.subjectName}`);
   const noRoom = assignments.filter((item) => !item.roomName).map((item) => `${item.grade}${item.letter}: ${item.subjectName}`);
@@ -1180,6 +1365,7 @@ function buildReports({ assignments, teachers, rooms, classes, classAdvisors, la
     classes: [...new Set(assignments.filter((item) => item.roomName === room.name).map((item) => `${item.grade}${item.letter}`))].sort(classNameSort)
   }));
   const windows = latest ? detectTeacherWindows(latest.payload) : [];
+  const teacherScheduleRows = latest ? teacherScheduleFromPayload(latest.payload) : [];
   const unscheduled = latest?.payload?.diagnostics || [];
   return {
     teacherRows,
@@ -1189,6 +1375,7 @@ function buildReports({ assignments, teachers, rooms, classes, classAdvisors, la
     noRoom,
     roomUse,
     windows,
+    teacherScheduleRows,
     unscheduled,
     latestSchedule: latest ? { id: latest.id, title: latest.title, createdAt: latest.createdAt } : null
   };
@@ -1198,12 +1385,40 @@ function reportSheets(reports) {
   return [
     { name: 'Учителя', rows: [['Учитель', 'Часы', 'Предметы', 'Классы'], ...reports.teacherRows.map((row) => [row.teacher, row.hours, row.subjects.join(', '), row.classes.join(', ')])] },
     { name: 'Учитель-классы', rows: [['Учитель', 'Класс', 'Предмет', 'Часы', 'Кабинет'], ...reports.teacherRows.flatMap((row) => row.lessons.map((lesson) => [row.teacher, lesson.className, lesson.subject, lesson.hours, lesson.room]))] },
+    { name: 'Расписание учителей', rows: [['Учитель', 'Класс', 'Смена', 'Неделя', 'День', 'Урок', 'Время', 'Предмет', 'Кабинет'], ...reports.teacherScheduleRows.map((row) => [row.teacher, row.className, row.shift, row.week, row.day, row.period, row.time, row.subject, row.room])] },
     { name: 'Классы', rows: [['Класс', 'Уровень', 'Смена', 'Часы', 'Предметов', 'Учителя'], ...reports.classRows.map((row) => [row.className, row.level, row.shift, row.hours, row.subjects, row.teachers.join(', ')])] },
     { name: 'Класс-предметы', rows: [['Класс', 'Предмет', 'Учитель', 'Часы', 'Кабинет'], ...reports.classRows.flatMap((row) => row.lessons.map((lesson) => [row.className, lesson.subject, lesson.teacher, lesson.hours, lesson.room]))] },
-    { name: 'Классные руководители', rows: [['Класс', 'Классный руководитель'], ...reports.advisorRows.map((row) => [row.className, row.teacher])] },
+    { name: 'Классные руководители', rows: [['Класс', 'Уровень', 'Смена', 'Классный руководитель', 'Кабинет', 'Примечание'], ...reports.advisorRows.map((row) => [row.className, row.level, row.shift, row.teacher, row.room, row.note])] },
     { name: 'Кабинеты', rows: [['Кабинет', 'Тип', 'Вместимость', 'Назначений', 'Классы'], ...reports.roomUse.map((row) => [row.room, row.type, row.capacity, row.assignments, row.classes.join(', ')])] },
     { name: 'Проблемы', rows: [['Тип', 'Описание'], ...reports.unassigned.map((item) => ['Без учителя', item]), ...reports.noRoom.map((item) => ['Без кабинета', item]), ...reports.unscheduled.map((item) => ['Не запланировано', `${item.className}: ${item.message}`]), ...reports.windows.map((item) => ['Окно учителя', `${item.teacher}: ${item.day}, ${item.gaps.join(', ')}`])] }
   ];
+}
+
+function teacherScheduleFromPayload(payload) {
+  const rows = [];
+  for (const [className, weeks] of Object.entries(payload.classes || {})) {
+    const shift = payload.classMeta?.[className]?.shift || 'morning';
+    for (const [week, grid] of Object.entries(weeks)) {
+      for (const day of payload.days || []) {
+        for (const period of payload.periods || []) {
+          const cell = grid[day.id]?.[period.number];
+          if (!cell?.teacher || cell.teacher === 'Не назначен') continue;
+          rows.push({
+            teacher: cell.teacher,
+            className,
+            shift: shiftLabel(payload, shift),
+            week: weekLabel(week),
+            day: day.name,
+            period: period.number,
+            time: periodTime(payload, shift, period.number),
+            subject: cell.subject,
+            room: cell.room || ''
+          });
+        }
+      }
+    }
+  }
+  return rows.sort((a, b) => a.teacher.localeCompare(b.teacher, 'ru') || classNameSort(a.className, b.className) || a.period - b.period);
 }
 
 function detectTeacherWindows(payload) {
@@ -1235,8 +1450,10 @@ function detectTeacherWindows(payload) {
 function restoreBackup(backup) {
   const tables = [
     ['schedules', backup.schedules],
+    ['schedule_blocks', backup.scheduleBlocks],
     ['teacher_constraints', backup.teacherConstraints],
     ['assignments', backup.assignments],
+    ['class_advisor_assignments', backup.classAdvisorAssignments],
     ['class_advisors', backup.classAdvisors],
     ['teachers', backup.teachers],
     ['rooms', backup.rooms],
@@ -1253,8 +1470,10 @@ function restoreBackup(backup) {
     insertRows('teachers', backup.teachers || [], ['id', 'full_name', 'subject_name']);
     insertRows('rooms', backup.rooms || [], ['id', 'name', 'room_type', 'capacity']);
     insertRows('class_advisors', backup.classAdvisors || [], ['class_id', 'teacher_id']);
+    insertRows('class_advisor_assignments', backup.classAdvisorAssignments || [], ['id', 'class_id', 'teacher_id', 'room_id', 'shift', 'note']);
     insertRows('assignments', backup.assignments || [], ['id', 'class_id', 'subject_id', 'teacher_id', 'room_id', 'weekly_hours']);
     insertRows('teacher_constraints', backup.teacherConstraints || [], ['id', 'teacher_id', 'day_id', 'shift', 'period_number', 'kind']);
+    insertRows('schedule_blocks', backup.scheduleBlocks || [], ['id', 'day_id', 'shift', 'period_number', 'reason']);
     insertRows('settings', backup.settings || [], ['key', 'value']);
     insertRows('schedules', backup.schedules || [], ['id', 'title', 'week_mode', 'created_at', 'payload']);
   });
