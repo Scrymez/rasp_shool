@@ -13,6 +13,7 @@
   --muted: #b9ad99;
   --line: rgba(231, 191, 103, 0.24);
   --glow: 0 0 28px rgba(231, 191, 103, 0.24), 0 0 52px rgba(142, 223, 199, 0.12);
+  --ease: cubic-bezier(.2,.8,.2,1);
   font-family: Inter, system-ui, sans-serif;
 }
 
@@ -87,7 +88,19 @@ button, .file-button, .export-link {
   padding: 0 14px;
   cursor: pointer;
   text-decoration: none;
-  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+  overflow: hidden;
+  transition: border-color 180ms var(--ease), background 180ms var(--ease), box-shadow 180ms var(--ease), transform 180ms var(--ease);
+}
+
+button::after, .file-button::after, .export-link::after {
+  content: "";
+  position: absolute;
+  inset: -55% auto -55% -40%;
+  width: 34%;
+  transform: rotate(18deg);
+  background: linear-gradient(90deg, transparent, rgba(243, 232, 202, 0.24), transparent);
+  opacity: 0;
+  pointer-events: none;
 }
 
 button:hover, .file-button:hover, .export-link:hover {
@@ -95,6 +108,10 @@ button:hover, .file-button:hover, .export-link:hover {
   background: rgba(231, 191, 103, 0.13);
   box-shadow: var(--glow);
   transform: translateY(-1px);
+}
+
+button:hover::after, .file-button:hover::after, .export-link:hover::after {
+  animation: button-rune 720ms var(--ease);
 }
 
 button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
@@ -112,7 +129,43 @@ input, select {
     linear-gradient(180deg, rgba(243, 232, 202, 0.05), transparent),
     rgba(17, 19, 29, 0.72);
   padding: 0 12px;
-  transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+  transition: border-color 180ms var(--ease), box-shadow 180ms var(--ease), background 180ms var(--ease);
+}
+
+input[type="checkbox"] {
+  appearance: none;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid rgba(231, 191, 103, 0.42);
+  background: radial-gradient(circle at 50% 50%, rgba(142, 223, 199, 0.12), transparent 58%), rgba(17, 19, 29, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(243, 232, 202, 0.04);
+  cursor: pointer;
+}
+
+input[type="checkbox"]::before {
+  content: "";
+  width: 11px;
+  height: 7px;
+  border-left: 3px solid #17131b;
+  border-bottom: 3px solid #17131b;
+  transform: rotate(-45deg) scale(0);
+  transition: transform 150ms var(--ease);
+}
+
+input[type="checkbox"]:checked {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--mint), var(--gold));
+  box-shadow: 0 0 0 3px rgba(142, 223, 199, 0.12), 0 0 22px rgba(142, 223, 199, 0.28);
+}
+
+input[type="checkbox"]:checked::before {
+  transform: rotate(-45deg) scale(1);
 }
 
 input:focus, select:focus {
@@ -215,6 +268,7 @@ nav button.active {
   background: linear-gradient(90deg, rgba(231, 191, 103, 0.24), rgba(142, 223, 199, 0.12));
   border-color: var(--gold);
   box-shadow: inset 3px 0 0 var(--mint), 0 0 26px rgba(231, 191, 103, 0.12);
+  animation: active-pulse 2200ms ease-in-out infinite;
 }
 
 .vault-status {
@@ -252,6 +306,7 @@ nav button.active {
   min-height: 0;
   overflow: auto;
   padding: 8px 12px 22px 0;
+  scroll-behavior: smooth;
 }
 
 .topbar-actions {
@@ -744,11 +799,14 @@ output {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 42px;
+  padding: 0 9px;
+  border: 1px solid rgba(231, 191, 103, 0.12);
+  border-radius: 8px;
+  background: rgba(17, 19, 29, 0.24);
 }
 
 .parallel-grid label input {
-  width: 18px;
-  min-height: 18px;
   accent-color: var(--mint);
 }
 
@@ -816,13 +874,22 @@ output {
 .toggle-list label, .class-picks label {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  border: 1px solid rgba(231, 191, 103, 0.16);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(17, 19, 29, 0.34);
+  transition: border-color 180ms var(--ease), background 180ms var(--ease), box-shadow 180ms var(--ease), transform 180ms var(--ease);
 }
 
 .toggle-list input, .class-picks input {
-  width: 18px;
-  min-height: 18px;
   accent-color: var(--gold);
+}
+
+.toggle-list label:hover, .class-picks label:hover {
+  border-color: rgba(142, 223, 199, 0.42);
+  background: rgba(142, 223, 199, 0.07);
+  box-shadow: 0 0 22px rgba(142, 223, 199, 0.08);
 }
 
 .class-picks {
@@ -833,16 +900,14 @@ output {
 }
 
 .class-picks label {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 12px;
   min-width: 82px;
-  background: rgba(17, 19, 29, 0.42);
 }
 
 .class-picks label.picked {
   border-color: var(--mint);
   color: var(--mint);
+  background: rgba(142, 223, 199, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(142, 223, 199, 0.18), 0 0 20px rgba(142, 223, 199, 0.09);
 }
 
 .schedule-preview {
@@ -1069,6 +1134,7 @@ output {
   box-shadow: 0 26px 90px rgba(0, 0, 0, 0.58);
   padding: 24px;
   overflow: auto;
+  animation: modal-in 220ms var(--ease) both;
 }
 
 .training-panel::before {
@@ -1109,6 +1175,13 @@ output {
   border-radius: 8px;
   padding: 14px;
   background: rgba(17, 19, 29, 0.46);
+  transition: border-color 180ms var(--ease), background 180ms var(--ease), transform 180ms var(--ease);
+}
+
+.training-step:hover {
+  border-color: rgba(142, 223, 199, 0.38);
+  background: rgba(142, 223, 199, 0.06);
+  transform: translateY(-2px);
 }
 
 .training-step > b {
@@ -1378,5 +1451,27 @@ output {
   @keyframes rise-in {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes modal-in {
+    from { opacity: 0; transform: translateY(10px) scale(.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes button-rune {
+    0% { transform: translateX(0) rotate(18deg); opacity: 0; }
+    18% { opacity: 1; }
+    100% { transform: translateX(520%) rotate(18deg); opacity: 0; }
+  }
+  @keyframes active-pulse {
+    0%, 100% { box-shadow: inset 3px 0 0 var(--mint), 0 0 18px rgba(231, 191, 103, 0.1); }
+    50% { box-shadow: inset 3px 0 0 var(--mint), 0 0 30px rgba(142, 223, 199, 0.18); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
   }
 }
