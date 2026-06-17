@@ -36,6 +36,7 @@ function App() {
   const [hasDraft, setHasDraft] = useState(() => Boolean(localStorage.getItem('school-scheduler-draft')));
   const [trainingOpen, setTrainingOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState(null);
+  const [runtimeStatus, setRuntimeStatus] = useState(null);
 
   async function refresh() {
     const data = await api('/bootstrap');
@@ -77,6 +78,12 @@ function App() {
     if (!window.schoolUpdater) return undefined;
     window.schoolUpdater.status().then(setUpdateStatus).catch(() => {});
     return window.schoolUpdater.onStatus(setUpdateStatus);
+  }, []);
+
+  useEffect(() => {
+    if (!window.schoolRuntime) return undefined;
+    window.schoolRuntime.status().then(setRuntimeStatus).catch(() => {});
+    return window.schoolRuntime.onStatus(setRuntimeStatus);
   }, []);
 
   if (!state) return <main className="loading">Открываю школьный гримуар...</main>;
@@ -141,7 +148,7 @@ function App() {
         {step === 4 && <Assignments state={state} refresh={refresh} setNotice={setNotice} />}
         {step === 5 && <Constraints state={state} refresh={refresh} setNotice={setNotice} />}
         {step === 6 && <TimeSettings state={state} refresh={refresh} setNotice={setNotice} />}
-        {step === 7 && <SystemPanel state={state} refresh={refresh} setNotice={setNotice} />}
+        {step === 7 && <SystemPanel state={state} refresh={refresh} setNotice={setNotice} runtimeStatus={runtimeStatus} />}
         {step === 8 && (
           <Generate
             state={state}
@@ -751,7 +758,7 @@ function TimeSettings({ state, refresh, setNotice }) {
   );
 }
 
-function SystemPanel({ state, refresh, setNotice }) {
+function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [reports, setReports] = useState(null);
@@ -818,6 +825,21 @@ function SystemPanel({ state, refresh, setNotice }) {
           <a className="export-link" href={`${API}/templates/schedule.xlsx`} download><FileSpreadsheet size={18} /> Шаблон расписания</a>
           <a className="export-link" href={`${API}/templates/teachers.xlsx`} download><Users size={18} /> Шаблон импорта учителей</a>
         </div>
+        {runtimeStatus && (
+          <div className="manual-teacher">
+            <h3>Компоненты Windows</h3>
+            <p className="hint">{runtimeStatus.message}</p>
+            <div className="component-grid">
+              {runtimeStatus.components?.map((component) => (
+                <p key={component.id}>
+                  <span>{component.ok ? 'Готово' : 'Проверка'}</span>
+                  <b>{component.name}</b>
+                  <small>{component.value}</small>
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="manual-teacher">
           <h3>Классные руководители</h3>
           <div className="class-advisor-grid">

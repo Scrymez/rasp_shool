@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import electronUpdater from 'electron-updater';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +11,7 @@ const port = Number(process.env.PORT || 4173);
 let server;
 let mainWindow;
 let updateStatus = { state: 'idle', message: 'Обновления не проверялись' };
+let runtimeStatus = { state: 'starting', message: 'Проверяем компоненты Windows...', components: [] };
 
 process.env.NODE_ENV = 'production';
 process.env.PORT = String(port);
@@ -17,9 +19,16 @@ process.env.SCHEDULER_APP_ROOT = appRoot;
 process.env.SCHEDULER_DATA_DIR = app.getPath('userData');
 
 async function createWindow() {
+  await prepareRuntime();
   const { startServer } = await import('../server/index.js');
   server = startServer();
   await waitForServer(`http://127.0.0.1:${port}/api/health`);
+  runtimeStatus = {
+    ...runtimeStatus,
+    state: 'ready',
+    message: 'Все компоненты готовы',
+    components: runtimeStatus.components.map((item) => item.id === 'server' ? { ...item, ok: true, value: `127.0.0.1:${port}` } : item)
+  };
 
   mainWindow = new BrowserWindow({
     width: 1360,
@@ -39,6 +48,7 @@ async function createWindow() {
 
   mainWindow.removeMenu();
   await mainWindow.loadURL(`http://127.0.0.1:${port}`);
+  sendRuntimeStatus();
   if (app.isPackaged) setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5000);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -48,9 +58,33 @@ async function createWindow() {
   });
 }
 
+async function prepareRuntime() {
+  const userData = app.getPath('userData');
+  const requiredDirs = ['data', 'exports', 'logs', 'updates'].map((name) => path.join(userData, name));
+  for (const dir of requiredDirs) fs.mkdirSync(dir, { recursive: true });
+
+  runtimeStatus = {
+    state: 'ready',
+    message: 'Компоненты установлены внутри приложения',
+    dataPath: userData,
+    components: [
+      { id: 'electron', name: 'Desktop-оболочка Electron', ok: true, value: process.versions.electron },
+      { id: 'node', name: 'Встроенный Node.js', ok: true, value: process.versions.node },
+      { id: 'chrome', name: 'Встроенный Chromium', ok: true, value: process.versions.chrome },
+      { id: 'frontend', name: 'Фронт приложения', ok: fs.existsSync(path.join(appRoot, 'dist', 'index.html')), value: 'dist/index.html' },
+      { id: 'server', name: 'Локальный сервер и база SQLite', ok: false, value: 'запускается' },
+      { id: 'storage', name: 'Папка данных Windows', ok: requiredDirs.every((dir) => fs.existsSync(dir)), value: userData }
+    ]
+  };
+}
+
 function sendUpdateStatus(status) {
   updateStatus = { ...updateStatus, ...status };
   mainWindow?.webContents.send('update:status', updateStatus);
+}
+
+function sendRuntimeStatus() {
+  mainWindow?.webContents.send('runtime:status', runtimeStatus);
 }
 
 autoUpdater.autoDownload = false;
@@ -89,6 +123,7 @@ ipcMain.handle('update:install', () => {
 });
 
 ipcMain.handle('update:status', () => updateStatus);
+ipcMain.handle('runtime:status', () => runtimeStatus);
 
 async function waitForServer(url) {
   const startedAt = Date.now();

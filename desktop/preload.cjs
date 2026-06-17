@@ -11,3 +11,12 @@ contextBridge.exposeInMainWorld('schoolUpdater', {
     return () => ipcRenderer.removeListener('update:status', listener);
   }
 });
+
+contextBridge.exposeInMainWorld('schoolRuntime', {
+  status: () => ipcRenderer.invoke('runtime:status'),
+  onStatus: (callback) => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on('runtime:status', listener);
+    return () => ipcRenderer.removeListener('runtime:status', listener);
+  }
+});
