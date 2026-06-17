@@ -15,8 +15,8 @@ const DRAFT_KEY = 'amanat-scheduler-draft';
 const AUTH_TOKEN_KEY = 'amanat-scheduler-token';
 const LEVELS = ['НОО', 'ООО', 'СОО'];
 const SHIFTS = [
-  { id: 'morning', name: '1 смена', label: 'утро - обед' },
-  { id: 'afternoon', name: '2 смена', label: 'обед - вечер' }
+  { id: 'morning', name: '1 смена', label: '' },
+  { id: 'afternoon', name: '2 смена', label: '' }
 ];
 const STEPS = [
   ['Классы', School],
@@ -357,8 +357,14 @@ function Classes({ state, refresh, setNotice }) {
           <button onClick={() => downloadFile('/templates/classes.xlsx')}><FileSpreadsheet size={18} /> Шаблон классов</button>
         </div>
         <div className="segmented">{LEVELS.map((level) => <button key={level} onClick={() => addLevel(level)}><Plus size={16} /> {level}</button>)}</div>
+        <div className="row-edit class-row header-row">
+          <b>Уровень образования</b>
+          <b>Параллель</b>
+          <b>Литерал</b>
+          <b>Смена</b>
+        </div>
         {rows.map((row, index) => (
-          <div className="row-edit" key={index}>
+          <div className="row-edit class-row" key={index}>
             <select value={row.level} onChange={(e) => updateRows(rows, setRows, index, 'level', e.target.value)}>{LEVELS.map((level) => <option key={level}>{level}</option>)}</select>
             <input type="number" min="1" max="11" value={row.grade} onChange={(e) => updateRows(rows, setRows, index, 'grade', e.target.value)} />
             <input value={row.letter} onChange={(e) => updateRows(rows, setRows, index, 'letter', e.target.value)} />
@@ -371,6 +377,12 @@ function Classes({ state, refresh, setNotice }) {
       </div>
       <div className="panel list-panel">
         <PanelTitle icon={FileSpreadsheet} title="Созданные классы" />
+        <div className="row-edit class-row header-row">
+          <b>Уровень образования</b>
+          <b>Параллель</b>
+          <b>Литерал</b>
+          <b>Смена</b>
+        </div>
         <div>{state.classes.length ? state.classes.map((item) => (
           <p className="action-line" key={item.id}>
             <span>{item.grade}{item.letter} · {item.level} · {shiftName(state, item.shift)}</span>
@@ -692,6 +704,11 @@ function Rooms({ state, refresh, setNotice }) {
         <PanelTitle icon={DoorOpen} title="Кабинеты" />
         <p className="hint">Кабинет можно закрепить за предметом в связках. Генератор не ставит два класса в один кабинет на один урок.</p>
         <FileUpload label="Импорт кабинетов" endpoint="/import/rooms" refresh={refresh} setNotice={setNotice} />
+        <div className="row-edit room-row header-row">
+          <b>Номер кабинета</b>
+          <b>Назначение</b>
+          <b>Количество мест</b>
+        </div>
         {rows.map((row, index) => (
           <div className="row-edit room-row" key={index}>
             <input value={row.name} onChange={(e) => updateRows(rows, setRows, index, 'name', e.target.value)} placeholder="Кабинет" />
@@ -706,6 +723,11 @@ function Rooms({ state, refresh, setNotice }) {
       </div>
       <div className="panel list-panel">
         <PanelTitle icon={FileSpreadsheet} title="Список кабинетов" />
+        <div className="row-edit room-row header-row">
+          <b>Номер кабинета</b>
+          <b>Назначение</b>
+          <b>Количество мест</b>
+        </div>
         <div>{state.rooms.length ? state.rooms.map((item) => (
           <p className="action-line" key={item.id}>
             <span>{item.name} · {item.roomType} · {item.capacity} мест</span>
@@ -946,7 +968,6 @@ function TimeSettings({ state, refresh, setNotice }) {
           {shifts.map((shift, index) => (
             <label key={shift.id}>
               <span>{shift.name}</span>
-              <small>{shift.label}</small>
               <input type="time" value={shift.startsAt} onChange={(e) => updateRows(shifts, setShifts, index, 'startsAt', e.target.value)} />
             </label>
           ))}
@@ -1096,6 +1117,11 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
             <ReportTable
               headers={['Класс', 'Часы', 'Предметов', 'Учителя']}
               rows={reports.classRows.map((row) => [row.className, row.hours, row.subjects, row.teachers.join(', ')])}
+            />
+            <h3>Классы по сменам</h3>
+            <ReportTable
+              headers={['Смена', 'Класс', 'Уровень образования', 'Параллель', 'Литерал']}
+              rows={(reports.classesByShiftRows || []).map((row) => [row.shift, row.className, row.level, row.grade, row.letter])}
             />
             <h3>Классные руководители</h3>
             <ReportTable

@@ -1247,7 +1247,7 @@ function escapeHtml(value) {
 
 function shiftLabel(payload, shiftId) {
   const shift = payload.shifts?.find((item) => item.id === shiftId);
-  return shift ? `${shift.name} (${shift.label})` : shiftId;
+  return shift ? shift.name : shiftId;
 }
 
 function periodTime(payload, shiftId, periodNumber) {
@@ -1329,13 +1329,23 @@ function buildReports({ assignments, teachers, rooms, classes, classAdvisors, la
     return {
       className,
       level: schoolClass.level,
-      shift: schoolClass.shift,
+      shift: shiftLabel({ shifts: json.get('shifts') }, schoolClass.shift),
       hours: rows.reduce((sum, item) => sum + Number(item.weeklyHours || 0), 0),
       subjects: rows.length,
       teachers: [...new Set(rows.map((item) => item.teacherName).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru')),
       lessons: rows.map((item) => ({ subject: item.subjectName, teacher: item.teacherName || '', hours: item.weeklyHours, room: item.roomName || '' }))
     };
   });
+  const classesByShiftRows = classes.map((schoolClass) => {
+    const className = `${schoolClass.grade}${schoolClass.letter}`;
+    return {
+      className,
+      level: schoolClass.level,
+      grade: schoolClass.grade,
+      letter: schoolClass.letter,
+      shift: shiftLabel({ shifts: json.get('shifts') }, schoolClass.shift)
+    };
+  }).sort((a, b) => a.shift.localeCompare(b.shift, 'ru') || classNameSort(a.className, b.className));
 
   const advisorRows = classes.map((schoolClass) => {
     const className = `${schoolClass.grade}${schoolClass.letter}`;
@@ -1370,6 +1380,7 @@ function buildReports({ assignments, teachers, rooms, classes, classAdvisors, la
   return {
     teacherRows,
     classRows,
+    classesByShiftRows,
     advisorRows,
     unassigned,
     noRoom,
@@ -1387,6 +1398,7 @@ function reportSheets(reports) {
     { name: 'Учитель-классы', rows: [['Учитель', 'Класс', 'Предмет', 'Часы', 'Кабинет'], ...reports.teacherRows.flatMap((row) => row.lessons.map((lesson) => [row.teacher, lesson.className, lesson.subject, lesson.hours, lesson.room]))] },
     { name: 'Расписание учителей', rows: [['Учитель', 'Класс', 'Смена', 'Неделя', 'День', 'Урок', 'Время', 'Предмет', 'Кабинет'], ...reports.teacherScheduleRows.map((row) => [row.teacher, row.className, row.shift, row.week, row.day, row.period, row.time, row.subject, row.room])] },
     { name: 'Классы', rows: [['Класс', 'Уровень', 'Смена', 'Часы', 'Предметов', 'Учителя'], ...reports.classRows.map((row) => [row.className, row.level, row.shift, row.hours, row.subjects, row.teachers.join(', ')])] },
+    { name: 'Классы по сменам', rows: [['Смена', 'Класс', 'Уровень образования', 'Параллель', 'Литерал'], ...reports.classesByShiftRows.map((row) => [row.shift, row.className, row.level, row.grade, row.letter])] },
     { name: 'Класс-предметы', rows: [['Класс', 'Предмет', 'Учитель', 'Часы', 'Кабинет'], ...reports.classRows.flatMap((row) => row.lessons.map((lesson) => [row.className, lesson.subject, lesson.teacher, lesson.hours, lesson.room]))] },
     { name: 'Классные руководители', rows: [['Класс', 'Уровень', 'Смена', 'Классный руководитель', 'Кабинет', 'Примечание'], ...reports.advisorRows.map((row) => [row.className, row.level, row.shift, row.teacher, row.room, row.note])] },
     { name: 'Кабинеты', rows: [['Кабинет', 'Тип', 'Вместимость', 'Назначений', 'Классы'], ...reports.roomUse.map((row) => [row.room, row.type, row.capacity, row.assignments, row.classes.join(', ')])] },

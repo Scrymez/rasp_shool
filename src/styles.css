@@ -528,6 +528,28 @@ output {
   grid-template-columns: 1fr 1fr 110px;
 }
 
+.row-edit.class-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) 110px 110px minmax(120px, 0.85fr);
+}
+
+.header-row {
+  margin: 14px 0 8px;
+}
+
+.header-row b {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(231, 191, 103, 0.18);
+  border-radius: 8px;
+  color: var(--gold);
+  background: rgba(231, 191, 103, 0.08);
+  font-size: 0.86rem;
+  line-height: 1.15;
+}
+
 .row-edit.constraint-row {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.7fr) minmax(120px, 0.6fr) 110px 42px;
@@ -561,7 +583,7 @@ output {
   grid-column: 1 / -1;
 }
 
-.list-panel > div {
+.list-panel > div:not(.header-row) {
   display: grid;
   gap: 8px;
   max-height: 630px;
@@ -1385,7 +1407,7 @@ output {
     grid-template-columns: 86px 260px 250px 150px 96px;
     max-height: 68vh;
   }
-  .editor-grid, .row-edit.room-row, .row-edit.constraint-row, .row-edit.block-row, .constraint-quick, .shift-settings, .period-editor-grid { grid-template-columns: 1fr; }
+  .editor-grid, .row-edit.room-row, .row-edit.class-row, .row-edit.constraint-row, .row-edit.block-row, .constraint-quick, .shift-settings, .period-editor-grid { grid-template-columns: 1fr; }
   .subject-settings-head, .parallel-grid { grid-template-columns: 1fr; }
   .subject-add-row { grid-template-columns: 1fr; }
   .difficulty-rules-grid { grid-template-columns: 1fr; }

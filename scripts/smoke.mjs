@@ -80,12 +80,14 @@ if (allClasses().length !== 2) throw new Error('Классы не созданы
 if (allTeachers().length !== 2) throw new Error('Учитель/предметы не созданы');
 if (allRooms().length !== 1) throw new Error('Кабинет не создан');
 if (!reports.classRows.length || !reports.teacherRows.length) throw new Error('Отчеты пустые');
+if (!reports.classesByShiftRows.some((item) => item.className === '1А' && item.shift === '1 смена')) throw new Error('Отчет классов по сменам неверный');
 if (!reports.advisorRows.every((item) => item.teacher === 'Иванова Мария Петровна' && item.room === '101')) throw new Error('Классные руководители не попали в отчеты');
 if (!reports.teacherScheduleRows.length) throw new Error('Расписание учителей не попало в отчеты');
 if (backup.version !== 1) throw new Error('Backup неверный');
 if (pdf.slice(0, 4).toString() !== '%PDF') throw new Error('PDF неверный');
 if (!xlsxText(gridExport.body).includes('Полное расписание') || !xlsxText(gridExport.body).includes('1 урок')) throw new Error('Сеточный экспорт расписания неверный');
-if (!xlsxText(reportsExport.body).includes('Расписание учителей') || !xlsxText(reportsExport.body).includes('Классные руководители')) throw new Error('Excel-отчеты неверные');
+if (!xlsxText(reportsExport.body).includes('Расписание учителей') || !xlsxText(reportsExport.body).includes('Классы по сменам')) throw new Error('Excel-отчеты неверные');
+if (xlsxText(reportsExport.body).includes('утро - обед') || xlsxText(reportsExport.body).includes('обед - вечер')) throw new Error('В отчетах смены должны быть без скобок');
 if (scheduleTemplate.body.slice(0, 2).toString() !== 'PK') throw new Error('Шаблон расписания неверный');
 if (teachersTemplate.body.slice(0, 2).toString() !== 'PK') throw new Error('Шаблон учителей неверный');
 if (!xlsxText(classesTemplate.body).includes('Шаблон') && classesTemplate.body.slice(0, 2).toString() !== 'PK') throw new Error('Шаблон классов неверный');
