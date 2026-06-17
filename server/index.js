@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
@@ -7,7 +8,8 @@ import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { z } from 'zod';
 import {
   allAssignments, allClasses, allRooms, allSubjects, allTeacherConstraints,
-  allTeachers, allAuditLog, allClassAdvisors, audit, db, json, migrate, runTransaction
+  allTeachers, allAuditLog, allClassAdvisors, audit, db, ensureAdminPasswordHash,
+  json, migrate, runTransaction, setAdminPassword, verifyAdminPassword
 } from './db.js';
 import { generateSchedule } from './scheduler.js';
 
@@ -16,26 +18,28 @@ migrate();
 const app = express();
 const port = Number(process.env.PORT || 4173);
 const root = path.resolve(process.env.SCHEDULER_APP_ROOT || process.cwd());
+const sessions = new Map();
+const sessionTtlMs = 8 * 60 * 60 * 1000;
 
-app.use(cors());
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || /^http:\/\/(127\.0\.0\.1|localhost):\d{2,5}$/.test(origin)) return callback(null, true);
+    return callback(new Error('CORS origin blocked'));
+  }
+}));
 app.use(express.json({ limit: '20mb' }));
 
 app.post('/api/login', (req, res) => {
   const password = String(req.body?.password || '');
-  const admin = json.get('admin');
-  res.json({ ok: password === admin.password });
-});
-
-app.post('/api/admin/password', (req, res) => {
-  const body = z.object({
-    currentPassword: z.string(),
-    newPassword: z.string().min(4)
-  }).parse(req.body);
-  const admin = json.get('admin');
-  if (body.currentPassword !== admin.password) return res.status(403).json({ error: 'Текущий пароль неверный' });
-  json.set('admin', { password: body.newPassword });
-  audit('update', 'admin-password');
-  res.json({ ok: true });
+  const result = verifyAdminPassword(password);
+  if (!result.ok) {
+    audit('login-failed', 'admin');
+    return res.status(401).json({ ok: false, error: 'Пароль неверный' });
+  }
+  const token = randomBytes(32).toString('base64url');
+  sessions.set(token, { createdAt: Date.now(), expiresAt: Date.now() + sessionTtlMs });
+  audit('login', 'admin');
+  res.json({ ok: true, token, expiresIn: sessionTtlMs / 1000, mustChangePassword: result.forceChange });
 });
 
 app.get('/api/health', (_req, res) => {
@@ -46,6 +50,26 @@ app.get('/api/health', (_req, res) => {
     teachers: allTeachers().length,
     rooms: allRooms().length
   });
+});
+
+app.use('/api', requireAdminSession);
+
+app.post('/api/logout', (req, res) => {
+  const token = tokenFromRequest(req);
+  if (token) sessions.delete(token);
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/password', (req, res) => {
+  const body = z.object({
+    currentPassword: z.string(),
+    newPassword: z.string().min(8)
+  }).parse(req.body);
+  const current = verifyAdminPassword(body.currentPassword);
+  if (!current.ok) return res.status(403).json({ error: 'Текущий пароль неверный' });
+  setAdminPassword(body.newPassword);
+  audit('update', 'admin-password');
+  res.json({ ok: true });
 });
 
 app.get('/api/bootstrap', (_req, res) => {
@@ -570,6 +594,7 @@ app.post('/api/restore', (req, res) => {
   const backup = req.body?.backup || req.body;
   if (!backup?.version) return res.status(400).json({ error: 'Файл backup неверный' });
   restoreBackup(backup);
+  ensureAdminPasswordHash();
   audit('import', 'backup', { createdAt: backup.createdAt });
   res.json({ ok: true, subjects: allSubjects().length, classes: allClasses().length });
 });
@@ -580,8 +605,9 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 export function startServer(host = '127.0.0.1') {
-  return app.listen(port, host, () => {
-    console.log(`Scheduler API: http://${host}:${port}`);
+  const safeHost = safeListenHost(host);
+  return app.listen(port, safeHost, () => {
+    console.log(`Scheduler API: http://${safeHost}:${port}`);
   });
 }
 
@@ -589,6 +615,30 @@ export { app };
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   startServer(process.env.HOST || '127.0.0.1');
+}
+
+function safeListenHost(host) {
+  if (host === '127.0.0.1' || host === 'localhost' || host === '::1') return host;
+  if (process.env.SCHEDULER_ALLOW_NETWORK === '1') return host;
+  console.warn(`Unsafe HOST "${host}" ignored. Set SCHEDULER_ALLOW_NETWORK=1 to expose the API.`);
+  return '127.0.0.1';
+}
+
+function requireAdminSession(req, res, next) {
+  const token = tokenFromRequest(req);
+  const session = token ? sessions.get(token) : null;
+  if (!session || session.expiresAt < Date.now()) {
+    if (token) sessions.delete(token);
+    return res.status(401).json({ error: 'Требуется вход администратора' });
+  }
+  session.expiresAt = Date.now() + sessionTtlMs;
+  next();
+}
+
+function tokenFromRequest(req) {
+  const header = String(req.headers.authorization || '');
+  if (header.startsWith('Bearer ')) return header.slice(7);
+  return String(req.headers['x-admin-token'] || '');
 }
 
 function autoBindSubjectsToClasses() {

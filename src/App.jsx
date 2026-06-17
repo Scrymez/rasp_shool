@@ -12,6 +12,7 @@ const APP_NAME = 'Аманат Расписание';
 const APP_SUBTITLE = 'Разработка школьного расписания';
 const APP_AUTHOR = 'Латипов Саид Ахмедович';
 const DRAFT_KEY = 'amanat-scheduler-draft';
+const AUTH_TOKEN_KEY = 'amanat-scheduler-token';
 const LEVELS = ['НОО', 'ООО', 'СОО'];
 const SHIFTS = [
   { id: 'morning', name: '1 смена', label: 'утро - обед' },
@@ -30,7 +31,7 @@ const STEPS = [
 ];
 
 function App() {
-  const [logged, setLogged] = useState(false);
+  const [logged, setLogged] = useState(() => Boolean(sessionStorage.getItem(AUTH_TOKEN_KEY)));
   const [step, setStep] = useState(0);
   const [state, setState] = useState(null);
   const [schedule, setSchedule] = useState(null);
@@ -75,8 +76,18 @@ function App() {
   }
 
   useEffect(() => {
-    refresh().catch(() => setNotice('Сервер не отвечает'));
-  }, []);
+    if (!logged) return;
+    refresh().catch((error) => {
+      if (error.status === 401) {
+        sessionStorage.removeItem(AUTH_TOKEN_KEY);
+        setLogged(false);
+        setState(null);
+        setNotice('Сессия истекла. Войдите снова.');
+        return;
+      }
+      setNotice('Сервер не отвечает');
+    });
+  }, [logged]);
 
   useEffect(() => {
     if (!window.schoolUpdater) return undefined;
@@ -90,14 +101,14 @@ function App() {
     return window.schoolRuntime.onStatus(setRuntimeStatus);
   }, []);
 
-  if (!state) return <main className="loading">Открываю школьный гримуар...</main>;
   if (!logged) {
     return (
       <main className="login-shell">
-        <Login setLogged={setLogged} setStep={setStep} setNotice={setNotice} />
+        <Login setLogged={setLogged} setStep={setStep} setNotice={setNotice} setState={setState} />
       </main>
     );
   }
+  if (!state) return <main className="loading">Открываю школьный гримуар...</main>;
 
   return (
     <main className="app-shell">
@@ -135,10 +146,13 @@ function App() {
             {window.schoolUpdater && <UpdateControl status={updateStatus} setNotice={setNotice} />}
             <button onClick={() => setTrainingOpen(true)}><BookOpen size={18} /> Обучение</button>
             {hasDraft && <button onClick={loadDraft}><FileDown size={18} /> Загрузить черновик</button>}
-            <button onClick={() => {
+            <button onClick={async () => {
+              await api('/logout', { method: 'POST' }).catch(() => {});
+              sessionStorage.removeItem(AUTH_TOKEN_KEY);
               setLogged(false);
               setStep(0);
               setSchedule(null);
+              setState(null);
               setNotice('');
             }}><KeyRound size={18} /> Выход</button>
           </div>
@@ -183,14 +197,22 @@ function App() {
   );
 }
 
-function Login({ setLogged, setStep, setNotice }) {
+function Login({ setLogged, setStep, setNotice, setState }) {
   const [password, setPassword] = useState('');
   async function submit(event) {
     event.preventDefault();
-    const result = await api('/login', { method: 'POST', body: { password } });
-    setLogged(result.ok);
-    setNotice(result.ok ? 'Администратор вошел' : 'Пароль неверный');
-    if (result.ok) setStep(0);
+    try {
+      const result = await api('/login', { method: 'POST', body: { password } });
+      sessionStorage.setItem(AUTH_TOKEN_KEY, result.token);
+      setState(null);
+      setLogged(true);
+      setNotice(result.mustChangePassword ? 'Вход выполнен. Смените стандартный пароль admin.' : 'Администратор вошел');
+      setStep(result.mustChangePassword ? 7 : 0);
+    } catch {
+      sessionStorage.removeItem(AUTH_TOKEN_KEY);
+      setLogged(false);
+      setNotice('Пароль неверный');
+    }
   }
   return (
     <section className="ritual-panel hero-panel">
@@ -867,6 +889,21 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
     setNotice('Backup восстановлен');
   }
 
+  async function downloadBackup() {
+    await downloadFile('/backup.json');
+    setNotice('Backup скачан');
+  }
+
+  async function downloadReports() {
+    await downloadFile('/reports.xlsx');
+    setNotice('Отчеты скачаны');
+  }
+
+  async function downloadTemplate(path) {
+    await downloadFile(path);
+    setNotice('Шаблон скачан');
+  }
+
   return (
     <section className="grid-two">
       <div className="panel">
@@ -879,7 +916,7 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
         </div>
         <div className="manual-teacher">
           <h3>Backup</h3>
-          <a className="export-link" href={`${API}/backup.json`}><FileDown size={18} /> Скачать backup</a>
+          <button className="export-link" onClick={downloadBackup}><FileDown size={18} /> Скачать backup</button>
           <label className="file-button">
             <Upload size={17} /> Восстановить backup
             <input type="file" accept=".json" onChange={restore} />
@@ -892,8 +929,8 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
         </div>
         <div className="manual-teacher">
           <h3>Excel-шаблоны</h3>
-          <a className="export-link" href={`${API}/templates/schedule.xlsx`} download><FileSpreadsheet size={18} /> Шаблон расписания</a>
-          <a className="export-link" href={`${API}/templates/teachers.xlsx`} download><Users size={18} /> Шаблон импорта учителей</a>
+          <button className="export-link" onClick={() => downloadTemplate('/templates/schedule.xlsx')}><FileSpreadsheet size={18} /> Шаблон расписания</button>
+          <button className="export-link" onClick={() => downloadTemplate('/templates/teachers.xlsx')}><Users size={18} /> Шаблон импорта учителей</button>
         </div>
         {runtimeStatus && (
           <div className="manual-teacher">
@@ -915,7 +952,7 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
         <PanelTitle icon={BarChart3} title="Отчеты и журнал" />
         <div className="segmented">
           <button className="primary" onClick={loadReports}><BarChart3 size={18} /> Обновить отчеты</button>
-          <a className="export-link" href={`${API}/reports.xlsx`}><FileSpreadsheet size={18} /> Скачать отчеты</a>
+          <button className="export-link" onClick={downloadReports}><FileSpreadsheet size={18} /> Скачать отчеты</button>
         </div>
         {reports && (
           <div className="report-box">
@@ -967,6 +1004,10 @@ function Generate({ state, selectedClasses, setSelectedClasses, weekMode, setWee
     await refresh();
     setNotice('Расписание создано');
   }
+  async function downloadSchedule(path) {
+    await downloadFile(path);
+    setNotice('Файл расписания скачан');
+  }
   return (
     <section className="panel">
       <PanelTitle icon={Play} title="Выбор классов и генерация" />
@@ -993,10 +1034,10 @@ function Generate({ state, selectedClasses, setSelectedClasses, weekMode, setWee
       {schedule && <SchedulePreview schedule={schedule} setSchedule={setSchedule} state={state} setNotice={setNotice} />}
       {schedule?.id && (
         <div className="export-row">
-          <a className="export-link" href={`${API}/export/schedules/${schedule.id}.xlsx`}><Download size={18} /> Экспорт в Excel</a>
-          <a className="export-link primary-export" href={`${API}/export/schedules/${schedule.id}.grid.xlsx`}><FileSpreadsheet size={18} /> Скачать все расписание</a>
-          <a className="export-link" href={`${API}/export/schedules/${schedule.id}.pdf`}><FileDown size={18} /> Экспорт в PDF</a>
-          <a className="export-link" href={`${API}/print/schedules/${schedule.id}.html`} target="_blank" rel="noreferrer"><Printer size={18} /> Печатная форма</a>
+          <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.xlsx`)}><Download size={18} /> Экспорт в Excel</button>
+          <button className="export-link primary-export" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.grid.xlsx`)}><FileSpreadsheet size={18} /> Скачать все расписание</button>
+          <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.pdf`)}><FileDown size={18} /> Экспорт в PDF</button>
+          <button className="export-link" onClick={() => openProtectedFile(`/print/schedules/${schedule.id}.html`)}><Printer size={18} /> Печатная форма</button>
         </div>
       )}
     </section>
@@ -1347,13 +1388,61 @@ function readFile(file) {
 }
 
 async function api(path, options = {}) {
+  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
   const response = await fetch(`${API}${path}`, {
     method: options.method || 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
     body: options.body ? JSON.stringify(options.body) : undefined
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) {
+    const error = new Error(await response.text());
+    error.status = response.status;
+    throw error;
+  }
   return response.json();
+}
+
+async function downloadFile(path) {
+  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  const response = await fetch(`${API}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  });
+  if (!response.ok) {
+    const error = new Error(await response.text());
+    error.status = response.status;
+    throw error;
+  }
+  const blob = await response.blob();
+  const name = fileNameFromDisposition(response.headers.get('content-disposition')) || 'download';
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function openProtectedFile(path) {
+  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  const response = await fetch(`${API}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank', 'noopener,noreferrer');
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function fileNameFromDisposition(value) {
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(value || '')?.[1];
+  if (encoded) return decodeURIComponent(encoded);
+  return /filename="?([^"]+)"?/i.exec(value || '')?.[1] || '';
 }
 
 createRoot(document.getElementById('root')).render(<App />);

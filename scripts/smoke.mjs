@@ -1,17 +1,22 @@
-import { db, migrate, runTransaction, allSubjects, allClasses, allTeachers, allRooms } from '../server/db.js';
+import { db, migrate, runTransaction, allSubjects, allClasses, allTeachers, allRooms, setAdminPassword } from '../server/db.js';
 import { strFromU8, unzipSync } from 'fflate';
 
 const base = 'http://127.0.0.1:4173/api';
 
 migrate();
+setAdminPassword('admin');
 runTransaction(() => {
   db.exec('DELETE FROM audit_log; DELETE FROM schedules; DELETE FROM teacher_constraints; DELETE FROM assignments; DELETE FROM class_advisors; DELETE FROM teachers; DELETE FROM rooms; DELETE FROM classes;');
 });
 
+let token = '';
 const request = async (path, options = {}) => {
   const response = await fetch(`${base}${path}`, {
     method: options.method || 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
     body: options.body ? JSON.stringify(options.body) : undefined
   });
   if (!response.ok) throw new Error(`${path}: ${await response.text()}`);
@@ -19,13 +24,21 @@ const request = async (path, options = {}) => {
   return type.includes('application/json') ? response.json() : Buffer.from(await response.arrayBuffer());
 };
 const download = async (path) => {
-  const response = await fetch(`${base}${path}`);
+  const response = await fetch(`${base}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  });
   if (!response.ok) throw new Error(`${path}: ${await response.text()}`);
   return {
     body: Buffer.from(await response.arrayBuffer()),
     name: response.headers.get('content-disposition') || ''
   };
 };
+
+const denied = await fetch(`${base}/backup.json`);
+if (denied.status !== 401) throw new Error('Backup без токена должен быть закрыт');
+const login = await request('/login', { method: 'POST', body: { password: 'admin' } });
+if (!login.ok || !login.token) throw new Error('Вход администратора не выдал токен');
+token = login.token;
 
 await request('/classes', { method: 'POST', body: { classes: [
   { level: 'НОО', grade: 1, letter: 'А', shift: 'morning' },

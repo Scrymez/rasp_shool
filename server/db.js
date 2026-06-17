@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_SUBJECTS } from './fgos.js';
@@ -171,10 +172,72 @@ function seedSettings() {
       maxLessonsByGrade: { 1: 4, 2: 5, 3: 5, 4: 5, 5: 6, 6: 6, 7: 7, 8: 7, 9: 7, 10: 7, 11: 7 },
       maxDailyDifficultyByGrade: { 1: 16, 2: 18, 3: 19, 4: 20, 5: 24, 6: 25, 7: 26, 8: 27, 9: 28, 10: 29, 11: 29 }
     },
-    admin: { password: 'admin' }
+    admin: passwordRecord('admin', true)
   };
   const stmt = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [key, value] of Object.entries(defaults)) stmt.run(key, JSON.stringify(value));
+  ensureAdminPasswordHash();
+}
+
+function passwordRecord(password, forceChange = false) {
+  return {
+    passwordHash: hashPassword(password),
+    forceChange,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function hashPassword(password) {
+  const salt = randomBytes(16).toString('base64url');
+  const cost = { n: 16384, r: 8, p: 1 };
+  const hash = scryptSync(String(password), salt, 64, {
+    N: cost.n,
+    r: cost.r,
+    p: cost.p,
+    maxmem: 64 * 1024 * 1024
+  }).toString('base64url');
+  return `scrypt$${cost.n}$${cost.r}$${cost.p}$${salt}$${hash}`;
+}
+
+function verifyPassword(password, encoded) {
+  const parts = String(encoded || '').split('$');
+  if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
+  const [, n, r, p, salt, expectedHash] = parts;
+  const expected = Buffer.from(expectedHash, 'base64url');
+  const actual = scryptSync(String(password), salt, expected.length, {
+    N: Number(n),
+    r: Number(r),
+    p: Number(p),
+    maxmem: 64 * 1024 * 1024
+  });
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+export function ensureAdminPasswordHash() {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin');
+  if (!row) {
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('admin', JSON.stringify(passwordRecord('admin', true)));
+    return;
+  }
+  const admin = JSON.parse(row.value || '{}');
+  if (admin.passwordHash) return;
+  const plainPassword = String(admin.password || 'admin');
+  db.prepare('UPDATE settings SET value = ? WHERE key = ?')
+    .run(JSON.stringify(passwordRecord(plainPassword, plainPassword === 'admin')), 'admin');
+}
+
+export function verifyAdminPassword(password) {
+  ensureAdminPasswordHash();
+  const admin = JSON.parse(db.prepare('SELECT value FROM settings WHERE key = ?').get('admin')?.value || '{}');
+  return {
+    ok: verifyPassword(password, admin.passwordHash),
+    forceChange: Boolean(admin.forceChange)
+  };
+}
+
+export function setAdminPassword(password) {
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run('admin', JSON.stringify(passwordRecord(password, false)));
 }
 
 export const json = {
