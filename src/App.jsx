@@ -655,7 +655,7 @@ function Assignments({ state, refresh, setNotice }) {
     const map = new Map();
     for (const teacher of state.teachers) {
       const key = teacher.subjectName.toLowerCase();
-      map.set(key, [...(map.get(key) || []), teacher]);
+      map.set(key, uniqueTeachersByName([...(map.get(key) || []), teacher]));
     }
     return map;
   }, [state.teachers]);
@@ -670,7 +670,7 @@ function Assignments({ state, refresh, setNotice }) {
       <div className="assignment-table">
         <b>Класс</b><b>Предмет</b><b>Учитель</b><b>Кабинет</b><b>Часы</b>
         {rows.slice(0, 120).map((row, index) => {
-          const options = teachersBySubject.get(row.subjectName.toLowerCase()) || state.teachers;
+          const options = teachersBySubject.get(row.subjectName.toLowerCase()) || uniqueTeachersByName(state.teachers);
           return (
             <React.Fragment key={row.id}>
               <span>{row.grade}{row.letter}</span>
@@ -1196,6 +1196,15 @@ function groupTeachers(teachers) {
     const group = map.get(teacher.fullName) || { fullName: teacher.fullName, subjects: [] };
     if (!group.subjects.includes(teacher.subjectName)) group.subjects.push(teacher.subjectName);
     map.set(teacher.fullName, group);
+  }
+  return [...map.values()].sort((a, b) => a.fullName.localeCompare(b.fullName, 'ru'));
+}
+
+function uniqueTeachersByName(teachers) {
+  const map = new Map();
+  for (const teacher of teachers) {
+    const key = teacher.fullName.trim().toLowerCase();
+    if (!map.has(key)) map.set(key, teacher);
   }
   return [...map.values()].sort((a, b) => a.fullName.localeCompare(b.fullName, 'ru'));
 }
