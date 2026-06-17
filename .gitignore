@@ -1,0 +1,12 @@
+node_modules/
+release/
+dist/
+data/
+.DS_Store
+*.log
+.env
+.env.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
