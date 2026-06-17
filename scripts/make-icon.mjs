@@ -30,8 +30,8 @@ const png = makePng(size, size, rgba);
 const ico = makeIco(png);
 const outDir = path.resolve('build');
 fs.mkdirSync(outDir, { recursive: true });
-fs.writeFileSync(path.join(outDir, 'icon.png'), png);
-fs.writeFileSync(path.join(outDir, 'icon.ico'), ico);
+if (!fs.existsSync(path.join(outDir, 'icon.png'))) fs.writeFileSync(path.join(outDir, 'icon.png'), png);
+if (!fs.existsSync(path.join(outDir, 'icon.ico'))) fs.writeFileSync(path.join(outDir, 'icon.ico'), ico);
 
 function drawCircle(cx, cy, radius, color, stroke) {
   for (let y = 0; y < size; y++) {

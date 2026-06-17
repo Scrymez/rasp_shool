@@ -143,38 +143,41 @@ function App() {
             }}><KeyRound size={18} /> Выход</button>
           </div>
         </header>
-        {trainingOpen && <TrainingPanel onClose={() => setTrainingOpen(false)} />}
 
-        {step === 0 && <Classes state={state} refresh={refresh} setNotice={setNotice} />}
-        {step === 1 && <Subjects state={state} refresh={refresh} setNotice={setNotice} />}
-        {step === 2 && <Teachers state={state} refresh={refresh} setNotice={setNotice} />}
-        {step === 3 && <Rooms state={state} refresh={refresh} setNotice={setNotice} />}
-        {step === 4 && <Assignments state={state} refresh={refresh} setNotice={setNotice} />}
-        {step === 5 && <Constraints state={state} refresh={refresh} setNotice={setNotice} />}
-        {step === 6 && <TimeSettings state={state} refresh={refresh} setNotice={setNotice} />}
-        {step === 7 && <SystemPanel state={state} refresh={refresh} setNotice={setNotice} runtimeStatus={runtimeStatus} />}
-        {step === 8 && (
-          <Generate
-            state={state}
-            selectedClasses={selectedClasses}
-            setSelectedClasses={setSelectedClasses}
-            weekMode={weekMode}
-            setWeekMode={setWeekMode}
-            schedule={schedule}
-            setSchedule={setSchedule}
-            setNotice={setNotice}
-            refresh={refresh}
-          />
-        )}
+        <div className="workspace-scroll">
+          {trainingOpen && <TrainingPanel onClose={() => setTrainingOpen(false)} />}
 
-        {step < STEPS.length - 1 && (
-          <div className="flow-actions">
+          {step === 0 && <Classes state={state} refresh={refresh} setNotice={setNotice} />}
+          {step === 1 && <Subjects state={state} refresh={refresh} setNotice={setNotice} />}
+          {step === 2 && <Teachers state={state} refresh={refresh} setNotice={setNotice} />}
+          {step === 3 && <Rooms state={state} refresh={refresh} setNotice={setNotice} />}
+          {step === 4 && <Assignments state={state} refresh={refresh} setNotice={setNotice} />}
+          {step === 5 && <Constraints state={state} refresh={refresh} setNotice={setNotice} />}
+          {step === 6 && <TimeSettings state={state} refresh={refresh} setNotice={setNotice} />}
+          {step === 7 && <SystemPanel state={state} refresh={refresh} setNotice={setNotice} runtimeStatus={runtimeStatus} />}
+          {step === 8 && (
+            <Generate
+              state={state}
+              selectedClasses={selectedClasses}
+              setSelectedClasses={setSelectedClasses}
+              weekMode={weekMode}
+              setWeekMode={setWeekMode}
+              schedule={schedule}
+              setSchedule={setSchedule}
+              setNotice={setNotice}
+              refresh={refresh}
+            />
+          )}
+        </div>
+
+        <div className="bottom-actions">
+          <button className="draft-button" onClick={saveDraft}><Save size={18} /> Сохранить черновик</button>
+          {step < STEPS.length - 1 && (
             <button className="primary" onClick={() => setStep(step + 1)}>
               Далее <ChevronRight size={18} />
             </button>
-          </div>
-        )}
-        <button className="draft-button" onClick={saveDraft}><Save size={18} /> Сохранить черновик</button>
+          )}
+        </div>
       </section>
     </main>
   );

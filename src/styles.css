@@ -20,6 +20,39 @@
 
 html {
   background: var(--void);
+  scrollbar-color: rgba(231, 191, 103, 0.72) rgba(17, 19, 29, 0.72);
+  scrollbar-width: thin;
+}
+
+* {
+  scrollbar-color: rgba(231, 191, 103, 0.72) rgba(17, 19, 29, 0.72);
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background:
+    linear-gradient(180deg, rgba(17, 19, 29, 0.88), rgba(36, 34, 53, 0.86));
+  border: 1px solid rgba(231, 191, 103, 0.12);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb {
+  min-height: 42px;
+  border: 3px solid rgba(17, 19, 29, 0.86);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(231, 191, 103, 0.95), rgba(142, 223, 199, 0.78));
+  box-shadow: inset 0 0 0 1px rgba(243, 232, 202, 0.22), 0 0 16px rgba(142, 223, 199, 0.22);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(180deg, #f4d994, #9bf3d9);
 }
 
 body {
@@ -100,9 +133,11 @@ select option { background: #1d1b2a; }
 
 .app-shell {
   position: relative;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 720px;
   display: grid;
   grid-template-columns: 292px 1fr;
+  overflow: hidden;
 }
 
 .app-shell::before,
@@ -192,16 +227,31 @@ nav button.active {
 
 .workspace {
   position: relative;
-  padding: 30px;
+  height: 100vh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 26px 30px 18px;
   overflow: hidden;
 }
 
 .topbar {
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   gap: 18px;
   align-items: start;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(231, 191, 103, 0.12);
+}
+
+.workspace-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px 22px 0;
 }
 
 .topbar-actions {
@@ -262,7 +312,7 @@ h1, h2, h3 {
   letter-spacing: 0;
 }
 
-h1 { font-size: clamp(2.4rem, 5vw, 4.4rem); }
+h1 { font-size: clamp(2rem, 4vw, 3.7rem); }
 h2 { font-size: clamp(1.5rem, 3vw, 2.2rem); }
 h3 { font-size: 1.5rem; }
 
@@ -285,6 +335,10 @@ output {
   padding: 22px;
   overflow: hidden;
   animation: rise-in 360ms ease both;
+}
+
+.panel {
+  min-width: 0;
 }
 
 .panel::before, .ritual-panel::before {
@@ -380,6 +434,7 @@ output {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.75fr);
   gap: 18px;
+  align-items: start;
 }
 
 .wide-left { grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.6fr); }
@@ -711,12 +766,15 @@ output {
 
 .assignment-table {
   display: grid;
-  grid-template-columns: 76px minmax(190px, 1fr) minmax(170px, 0.8fr) minmax(130px, 0.5fr) 82px;
+  grid-template-columns: 86px minmax(260px, 1.15fr) minmax(250px, 1fr) minmax(150px, 0.55fr) 96px;
   gap: 8px;
   align-items: center;
-  max-height: 62vh;
+  max-height: calc(100vh - 250px);
+  min-height: 320px;
   overflow: auto;
   padding-right: 6px;
+  padding-bottom: 8px;
+  overscroll-behavior: contain;
 }
 
 .assignment-table > b {
@@ -734,6 +792,7 @@ output {
   display: flex;
   align-items: center;
   border-bottom: 1px solid rgba(231, 191, 103, 0.1);
+  overflow-wrap: anywhere;
 }
 
 .toggle-list {
@@ -796,7 +855,7 @@ output {
 .schedule-grid {
   display: grid;
   gap: 1px;
-  min-width: 860px;
+  min-width: 980px;
   background:
     linear-gradient(90deg, rgba(231, 191, 103, 0.2), rgba(142, 223, 199, 0.16), rgba(231, 191, 103, 0.2));
   border: 1px solid var(--line);
@@ -955,15 +1014,24 @@ output {
 }
 
 .flow-actions {
-  margin-top: 20px;
   display: flex;
   justify-content: flex-end;
 }
 
+.bottom-actions {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 0 0;
+  margin-top: 10px;
+  border-top: 1px solid rgba(231, 191, 103, 0.13);
+  background:
+    linear-gradient(180deg, rgba(17, 19, 29, 0), rgba(17, 19, 29, 0.82) 30%, rgba(17, 19, 29, 0.96));
+}
+
 .draft-button {
-  position: fixed;
-  right: 22px;
-  bottom: 22px;
+  position: static;
   z-index: 20;
   background: linear-gradient(135deg, rgba(142, 223, 199, 0.95), rgba(231, 191, 103, 0.92));
   color: #17131b;
@@ -1202,19 +1270,35 @@ output {
 }
 
 @media (max-width: 980px) {
-  .app-shell { grid-template-columns: 1fr; }
+  .app-shell {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
   .sidebar {
     position: static;
     height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
+  .workspace {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+  .workspace-scroll {
+    overflow: visible;
+    padding-right: 0;
+  }
   nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid-two, .wide-left, .hero-panel { grid-template-columns: 1fr; }
   .subject-editor { grid-template-columns: 1fr; }
   .sigil { max-width: 280px; margin: auto; }
-  .assignment-table { grid-template-columns: 70px minmax(150px, 1fr); }
-  .assignment-table > b:nth-child(3), .assignment-table > b:nth-child(4), .assignment-table > b:nth-child(5) { display: none; }
+  .assignment-table {
+    grid-template-columns: 86px 260px 250px 150px 96px;
+    max-height: 68vh;
+  }
   .editor-grid, .row-edit.room-row, .row-edit.constraint-row, .shift-settings, .period-editor-grid { grid-template-columns: 1fr; }
   .subject-settings-head, .parallel-grid { grid-template-columns: 1fr; }
   .subject-add-row { grid-template-columns: 1fr; }
@@ -1230,7 +1314,11 @@ output {
   .login-row, .row-edit, .toolbar { flex-direction: column; align-items: stretch; }
   .topbar { flex-direction: column; }
   .topbar-actions { justify-content: flex-start; }
-  .draft-button { right: 14px; bottom: 14px; }
+  .bottom-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .draft-button { width: 100%; }
   .training-panel { inset: 10px; padding: 16px; }
   .training-head { flex-direction: column; }
   .training-step { grid-template-columns: 1fr; min-height: auto; }
