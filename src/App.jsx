@@ -3,8 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import {
   BarChart3, BookOpen, CalendarDays, Check, ChevronRight, Database, Download, FileDown, FileSpreadsheet,
-  DoorOpen, Eye, KeyRound, MoonStar, Play, Plus, Printer, Save, School,
-  RefreshCw, ShieldCheck, Sparkles, Trash2, Upload, UserRound, Users, X
+  DoorOpen, KeyRound, MoonStar, Play, Plus, Printer, Save, School,
+  RefreshCw, ShieldCheck, Sparkles, Trash2, Upload, Users, X
 } from 'lucide-react';
 import './styles.css';
 
@@ -27,10 +27,8 @@ const STEPS = [
   ['Связки', Sparkles],
   ['Ограничения', ShieldCheck],
   ['Время', CalendarDays],
-  ['Создание', Play],
-  ['Кабинет учителя', UserRound],
-  ['Просмотр урока', Eye],
-  ['Система', Database]
+  ['Система', Database],
+  ['Создание', Play]
 ];
 
 function App() {
@@ -50,17 +48,6 @@ function App() {
     const data = await api('/bootstrap');
     setState(data);
     setSelectedClasses(data.classes.map((item) => item.id));
-  }
-
-  async function loadSchedule(id) {
-    const scheduleId = id || state?.schedules?.[0]?.id;
-    if (!scheduleId) {
-      setNotice('Расписание еще не создано');
-      return;
-    }
-    const result = await api(`/schedules/${scheduleId}`);
-    setSchedule({ id: result.id, ...result.schedule });
-    setNotice('Расписание загружено');
   }
 
   function saveDraft() {
@@ -186,7 +173,8 @@ function App() {
           {step === 4 && <Assignments state={state} refresh={refresh} setNotice={setNotice} />}
           {step === 5 && <Constraints state={state} refresh={refresh} setNotice={setNotice} />}
           {step === 6 && <TimeSettings state={state} refresh={refresh} setNotice={setNotice} />}
-          {step === 7 && (
+          {step === 7 && <SystemPanel state={state} refresh={refresh} setNotice={setNotice} runtimeStatus={runtimeStatus} />}
+          {step === 8 && (
             <Generate
               state={state}
               selectedClasses={selectedClasses}
@@ -199,9 +187,6 @@ function App() {
               refresh={refresh}
             />
           )}
-          {step === 8 && <TeacherCabinet state={state} schedule={schedule} loadSchedule={loadSchedule} setNotice={setNotice} />}
-          {step === 9 && <LessonViewer state={state} schedule={schedule} setSchedule={setSchedule} loadSchedule={loadSchedule} setNotice={setNotice} />}
-          {step === 10 && <SystemPanel state={state} refresh={refresh} setNotice={setNotice} runtimeStatus={runtimeStatus} />}
         </div>
 
         <div className="bottom-actions">
@@ -227,7 +212,7 @@ function Login({ setLogged, setStep, setNotice, setState }) {
       setState(null);
       setLogged(true);
       setNotice(result.mustChangePassword ? 'Вход выполнен. Смените стандартный пароль admin.' : 'Администратор вошел');
-      setStep(result.mustChangePassword ? STEPS.length - 1 : 0);
+      setStep(result.mustChangePassword ? 7 : 0);
     } catch {
       sessionStorage.removeItem(AUTH_TOKEN_KEY);
       setLogged(false);
@@ -281,9 +266,7 @@ function TrainingPanel({ onClose }) {
     ['Связки', 'Проверьте строки класс-предмет-учитель. Здесь задается кто ведет урок, кабинет и недельные часы.'],
     ['Ограничения', 'Заблокируйте школьные слоты, например понедельник 1 урок. Для учителей задайте выходной, работу с 3/4 урока или конкретный запрет.'],
     ['Время', 'Настройте учебные дни, старт 1 и 2 смены, длительность каждого урока, перемены и лимиты нагрузки.'],
-    ['Создание', 'Выберите классы и режим недели. После генерации проверьте диагностику, отчеты учителей и полный Excel-экспорт.'],
-    ['Кабинет учителя', 'Выберите учителя и проверьте его предметы, классы, нагрузку, ограничения, классное руководство и расписание.'],
-    ['Просмотр урока', 'Найдите урок по классу, учителю, дню или предмету. Откройте карточку урока и при необходимости отредактируйте ее.']
+    ['Создание', 'Выберите классы и режим недели. После генерации проверьте диагностику, отчеты учителей и полный Excel-экспорт.']
   ];
   const checklist = [
     'У каждого класса выбрана смена.',
@@ -1415,219 +1398,6 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
   );
 }
 
-function TeacherCabinet({ state, schedule, loadSchedule, setNotice }) {
-  const teacherGroups = useMemo(() => groupTeachers(state.teachers), [state.teachers]);
-  const [teacherName, setTeacherName] = useState(teacherGroups[0]?.fullName || '');
-  useEffect(() => {
-    if (!teacherName && teacherGroups[0]) setTeacherName(teacherGroups[0].fullName);
-  }, [teacherGroups, teacherName]);
-  const selected = teacherGroups.find((item) => item.fullName === teacherName) || teacherGroups[0];
-  const assignments = state.assignments.filter((item) => item.teacherName === teacherName);
-  const advisorRows = state.classAdvisors.filter((item) => item.teacherName === teacherName);
-  const constraints = state.teacherConstraints.filter((item) => item.teacherName === teacherName);
-  const lessons = flattenScheduleLessons(schedule).filter((item) => item.teacher === teacherName);
-  const days = [...new Set(lessons.map((item) => item.dayName))];
-  const totalHours = assignments.reduce((sum, item) => sum + Number(item.weeklyHours || 0), 0);
-
-  return (
-    <section className="teacher-cabinet">
-      <div className="panel teacher-summary">
-        <PanelTitle icon={UserRound} title="Кабинет учителя" />
-        <div className="teacher-selector">
-          <select value={teacherName} onChange={(event) => setTeacherName(event.target.value)}>
-            {teacherGroups.map((teacher) => <option value={teacher.fullName} key={teacher.fullName}>{teacher.fullName}</option>)}
-          </select>
-          <button onClick={() => loadSchedule()}><RefreshCw size={16} /> Загрузить последнее расписание</button>
-        </div>
-        {selected ? (
-          <>
-            <div className="metric-grid">
-              <article><b>{selected.subjects.length}</b><span>предметов</span></article>
-              <article><b>{assignments.length}</b><span>связок с классами</span></article>
-              <article><b>{totalHours}</b><span>часов в неделю</span></article>
-              <article><b>{lessons.length}</b><span>уроков в расписании</span></article>
-            </div>
-            <div className="subject-cloud">
-              {selected.subjects.map((subject) => <span key={subject}>{subject}</span>)}
-            </div>
-          </>
-        ) : <p className="hint">Добавьте учителей</p>}
-      </div>
-
-      <div className="panel">
-        <PanelTitle icon={School} title="Классы и предметы" />
-        <ReportTable
-          headers={['Класс', 'Предмет', 'Часы', 'Кабинет']}
-          rows={assignments.map((item) => [`${item.grade}${item.letter}`, item.subjectName, item.weeklyHours, item.roomName || 'Любой'])}
-        />
-      </div>
-
-      <div className="panel">
-        <PanelTitle icon={ShieldCheck} title="Ограничения и руководство" />
-        <div className="teacher-note-list">
-          {advisorRows.map((item) => <p key={`advisor-${item.id}`}><b>Классный руководитель</b><span>{item.grade}{item.letter} · {item.roomName || 'кабинет не выбран'} · {item.shift ? shiftName(state, item.shift) : 'смена класса'}</span></p>)}
-          {constraints.map((item) => {
-            const day = state.settings.days.find((row) => row.id === item.dayId);
-            return <p key={`constraint-${item.id}`}><b>Ограничение</b><span>{day?.name || item.dayId} · {item.shift ? shiftName(state, item.shift) : 'обе смены'} · {item.periodNumber ? `${item.periodNumber} урок` : 'весь день'}</span></p>;
-          })}
-          {!advisorRows.length && !constraints.length && <p className="hint">Нет назначений руководства и ограничений</p>}
-        </div>
-      </div>
-
-      <div className="panel teacher-schedule-panel">
-        <PanelTitle icon={CalendarDays} title="Расписание учителя" />
-        {!schedule && <p className="hint">Загрузите последнее расписание или создайте новое.</p>}
-        {schedule && (
-          <>
-            <div className="teacher-days">{days.map((day) => <span key={day}>{day}</span>)}</div>
-            <ReportTable
-              headers={['Неделя', 'День', 'Урок', 'Время', 'Класс', 'Предмет', 'Кабинет']}
-              rows={lessons.map((item) => [weekLabel(item.week), item.dayName, item.periodNumber, item.time, item.className, item.subject, item.room])}
-            />
-          </>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function LessonViewer({ state, schedule, setSchedule, loadSchedule, setNotice }) {
-  const lessons = useMemo(() => flattenScheduleLessons(schedule), [schedule]);
-  const [filters, setFilters] = useState({ className: '', teacher: '', dayId: '', query: '' });
-  const [selectedKey, setSelectedKey] = useState('');
-  const [edit, setEdit] = useState(null);
-  const filtered = lessons.filter((lesson) => (
-    (!filters.className || lesson.className === filters.className) &&
-    (!filters.teacher || lesson.teacher === filters.teacher) &&
-    (!filters.dayId || lesson.dayId === filters.dayId) &&
-    (!filters.query || [lesson.subject, lesson.teacher, lesson.room, lesson.className].join(' ').toLowerCase().includes(filters.query.toLowerCase()))
-  ));
-  const selected = filtered.find((lesson) => lesson.key === selectedKey) || filtered[0] || null;
-  const classNames = [...new Set(lessons.map((item) => item.className))].sort(classNameSort);
-  const teachers = [...new Set(lessons.map((item) => item.teacher).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
-
-  useEffect(() => {
-    if (!selectedKey && filtered[0]) setSelectedKey(filtered[0].key);
-  }, [filtered, selectedKey]);
-
-  async function saveLesson() {
-    const result = await api(`/schedules/${schedule.id}/cell`, {
-      method: 'PATCH',
-      body: {
-        className: edit.className,
-        week: edit.week,
-        dayId: edit.dayId,
-        periodNumber: edit.periodNumber,
-        cell: edit.subject ? {
-          subject: edit.subject,
-          teacher: edit.teacher,
-          teacherId: edit.teacherId || null,
-          room: edit.room,
-          roomId: edit.roomId || null,
-          difficulty: Number(edit.difficulty) || 3
-        } : null
-      }
-    });
-    setSchedule({ id: schedule.id, ...result.schedule });
-    setNotice(result.conflicts.length ? result.conflicts.join('; ') : 'Урок сохранен');
-    setEdit(null);
-  }
-
-  return (
-    <section className="lesson-viewer">
-      <div className="panel lesson-list-panel">
-        <PanelTitle icon={Eye} title="Просмотр урока" />
-        <div className="lesson-filters">
-          <select value={filters.className} onChange={(e) => setFilters({ ...filters, className: e.target.value })}>
-            <option value="">Все классы</option>
-            {classNames.map((item) => <option key={item}>{item}</option>)}
-          </select>
-          <select value={filters.teacher} onChange={(e) => setFilters({ ...filters, teacher: e.target.value })}>
-            <option value="">Все учителя</option>
-            {teachers.map((item) => <option key={item}>{item}</option>)}
-          </select>
-          <select value={filters.dayId} onChange={(e) => setFilters({ ...filters, dayId: e.target.value })}>
-            <option value="">Все дни</option>
-            {state.settings.days.filter((day) => day.enabled).map((day) => <option value={day.id} key={day.id}>{day.name}</option>)}
-          </select>
-          <input value={filters.query} onChange={(e) => setFilters({ ...filters, query: e.target.value })} placeholder="Поиск по предмету, кабинету, ФИО" />
-          <button onClick={() => loadSchedule()}><RefreshCw size={16} /> Загрузить последнее</button>
-        </div>
-        {!schedule && <p className="hint">Создайте расписание или загрузите последнее.</p>}
-        <div className="lesson-list">
-          {filtered.map((lesson) => (
-            <button className={selected?.key === lesson.key ? 'active' : ''} key={lesson.key} onClick={() => setSelectedKey(lesson.key)}>
-              <b>{lesson.subject}</b>
-              <span>{lesson.className} · {lesson.dayName} · {lesson.periodNumber} урок · {lesson.time}</span>
-              <small>{lesson.teacher || 'Учитель не назначен'} · {lesson.room || 'Кабинет не выбран'}</small>
-            </button>
-          ))}
-          {schedule && !filtered.length && <p className="hint">Уроки не найдены</p>}
-        </div>
-      </div>
-
-      <div className="panel lesson-card-panel">
-        <PanelTitle icon={BookOpen} title="Карточка урока" />
-        {selected ? (
-          <div className="lesson-card">
-            <div className="lesson-title">
-              <span>{selected.className}</span>
-              <h2>{selected.subject}</h2>
-              <p>{weekLabel(selected.week)} · {selected.dayName} · {selected.periodNumber} урок · {selected.time}</p>
-            </div>
-            <div className="lesson-facts">
-              <p><b>Учитель</b><span>{selected.teacher || 'Не назначен'}</span></p>
-              <p><b>Кабинет</b><span>{selected.room || 'Не выбран'}</span></p>
-              <p><b>Смена</b><span>{shiftName({ settings: { shifts: schedule.shifts } }, selected.shift)}</span></p>
-              <p><b>Сложность</b><span>{selected.difficulty || 3}/5 · {difficultyLabel(selected.difficulty || 3)}</span></p>
-            </div>
-            <div className="segmented">
-              <button className="primary" onClick={() => setEdit({ ...selected })}><Save size={18} /> Редактировать урок</button>
-              <button onClick={() => setSelectedKey('')}>Снять выбор</button>
-            </div>
-          </div>
-        ) : <p className="hint">Выберите урок слева</p>}
-      </div>
-
-      {edit && (
-        <ModalFrame label="Редактирование урока" className="lesson-edit-modal" onClose={() => setEdit(null)}>
-          <div className="training-panel">
-            <div className="training-head">
-              <div>
-                <p className="eyebrow">урок</p>
-                <h2>{edit.className} · {edit.dayName} · {edit.periodNumber} урок</h2>
-              </div>
-              <button onClick={() => setEdit(null)}><X size={18} /> Закрыть</button>
-            </div>
-            <div className="editor-grid lesson-edit-grid">
-              <select value={edit.subject} onChange={(e) => setEdit({ ...edit, subject: e.target.value })}>
-                <option value="">Пусто</option>
-                {state.subjects.map((subject) => <option key={subject.id}>{subject.name}</option>)}
-              </select>
-              <select value={edit.teacherId || ''} onChange={(e) => {
-                const teacher = state.teachers.find((item) => item.id === Number(e.target.value));
-                setEdit({ ...edit, teacherId: teacher?.id || '', teacher: teacher?.fullName || '' });
-              }}>
-                <option value="">Учитель</option>
-                {uniqueTeachersByName(state.teachers).map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.fullName}</option>)}
-              </select>
-              <select value={edit.roomId || ''} onChange={(e) => {
-                const room = state.rooms.find((item) => item.id === Number(e.target.value));
-                setEdit({ ...edit, roomId: room?.id || '', room: room?.name || '' });
-              }}>
-                <option value="">Кабинет</option>
-                {state.rooms.map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}
-              </select>
-              <input type="number" min="1" max="5" value={edit.difficulty || 3} onChange={(e) => setEdit({ ...edit, difficulty: Number(e.target.value) })} />
-            </div>
-            <button className="primary" onClick={saveLesson}><Save size={18} /> Сохранить урок</button>
-          </div>
-        </ModalFrame>
-      )}
-    </section>
-  );
-}
-
 function FileUpload({ label, endpoint, refresh, setNotice, onResult }) {
   async function upload(event) {
     const file = event.target.files[0];
@@ -1829,55 +1599,6 @@ function timeToMinutes(value) {
 function minutesToTime(total) {
   const normalized = ((total % 1440) + 1440) % 1440;
   return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
-}
-
-function flattenScheduleLessons(schedule) {
-  if (!schedule?.classes) return [];
-  const rows = [];
-  for (const [className, weeks] of Object.entries(schedule.classes)) {
-    const shift = schedule.classMeta?.[className]?.shift || 'morning';
-    for (const [week, grid] of Object.entries(weeks || {})) {
-      for (const day of schedule.days || []) {
-        for (const period of schedule.periods || []) {
-          const cell = grid?.[day.id]?.[period.number];
-          if (!cell?.subject) continue;
-          rows.push({
-            key: `${className}|${week}|${day.id}|${period.number}`,
-            className,
-            week,
-            dayId: day.id,
-            dayName: day.name,
-            periodNumber: period.number,
-            time: periodTime(schedule, shift, period.number),
-            shift,
-            subject: cell.subject || '',
-            teacher: cell.teacher || '',
-            teacherId: cell.teacherId || '',
-            room: cell.room || '',
-            roomId: cell.roomId || '',
-            difficulty: cell.difficulty || 3
-          });
-        }
-      }
-    }
-  }
-  return rows.sort((a, b) => (
-    classNameSort(a.className, b.className) ||
-    a.week.localeCompare(b.week, 'ru') ||
-    (schedule.days || []).findIndex((day) => day.id === a.dayId) - (schedule.days || []).findIndex((day) => day.id === b.dayId) ||
-    a.periodNumber - b.periodNumber
-  ));
-}
-
-function classNameSort(a, b) {
-  const left = parseClassName(a);
-  const right = parseClassName(b);
-  return left.grade - right.grade || left.letter.localeCompare(right.letter, 'ru');
-}
-
-function parseClassName(value) {
-  const match = String(value || '').match(/^(\d+)\s*(.*)$/);
-  return { grade: Number(match?.[1] || 0), letter: match?.[2] || String(value || '') };
 }
 
 function readFile(file) {
