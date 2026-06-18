@@ -295,10 +295,11 @@ app.get('/api/templates/schedule.xlsx', (_req, res) => {
     rows: [
       ['Как заполнять'],
       ['1. В файле есть лист на каждый класс.'],
-      ['2. В строках дни недели, в колонках номера уроков.'],
-      ['3. В ячейку урока пишите: Предмет; Учитель; Кабинет; Сложность.'],
-      ['4. Пример ячейки: Математика; Иванова М.П.; 101; 5.'],
-      ['5. Лист Все классы показывает, какие классы относятся к 1 и 2 смене.']
+      ['2. Дни недели идут горизонтально по колонкам.'],
+      ['3. В строках идут уроки и время. Заполняйте ячейку на пересечении дня и урока.'],
+      ['4. В ячейку урока пишите: Предмет; Учитель; Кабинет; Сложность.'],
+      ['5. Пример ячейки: Математика; Иванова М.П.; 101; 5.'],
+      ['6. Лист Все классы показывает, какие классы относятся к 1 и 2 смене.']
     ]
   });
   sendXlsx(res, 'Шаблон-расписания-всей-школы.xlsx', sheets);
@@ -1002,14 +1003,27 @@ function scheduleIndexRows(settings, classes) {
 }
 
 function fullScheduleTemplateRows(settings, classes) {
-  const rows = [
-    ['Класс', 'Смена', 'День', ...settings.periods.map((period) => `${period.number} урок`)],
-    ['Формат ячейки', 'Предмет; Учитель; Кабинет; Сложность', '', ...settings.periods.map((period) => `${periodTime(settings, 'morning', period.number)} / ${period.duration} мин`)]
-  ];
   const activeDays = settings.days.filter((item) => item.enabled);
+  const rows = [
+    ['Формат ячейки', 'Предмет; Учитель; Кабинет; Сложность'],
+    ['Подсказка', 'Дни недели идут горизонтально. Заполняйте пересечение урока и дня.'],
+    []
+  ];
   for (const schoolClass of classes) {
     const shiftId = schoolClass.shift || 'morning';
-    for (const day of activeDays) rows.push([classKey(schoolClass), shiftLabel(settings, shiftId), day.name, ...settings.periods.map(() => '')]);
+    const className = classKey(schoolClass);
+    rows.push(['Класс', className, 'Смена', shiftLabel(settings, shiftId)]);
+    rows.push(['Класс', 'Смена', 'Урок', 'Время', ...activeDays.map((day) => day.name)]);
+    for (const period of settings.periods) {
+      rows.push([
+        className,
+        shiftLabel(settings, shiftId),
+        `${period.number} урок`,
+        `${periodTime(settings, shiftId, period.number)} / ${period.duration} мин`,
+        ...activeDays.map(() => '')
+      ]);
+    }
+    rows.push([]);
   }
   return rows;
 }
@@ -1021,12 +1035,14 @@ function classScheduleTemplateRows(settings, schoolClass) {
     ['Класс', className],
     ['Смена', shiftLabel(settings, shiftId)],
     ['Формат ячейки', 'Предмет; Учитель; Кабинет; Сложность'],
+    ['Подсказка', 'Дни недели идут горизонтально. Заполняйте пересечение урока и дня.'],
     [],
-    ['День', ...settings.periods.map((period) => `${period.number} урок`)],
-    ['Время', ...settings.periods.map((period) => `${periodTime(settings, shiftId, period.number)} / ${period.duration} мин`)]
+    ['Урок', 'Время', ...settings.days.filter((item) => item.enabled).map((day) => day.name)]
   ];
   const activeDays = settings.days.filter((item) => item.enabled);
-  for (const day of activeDays) rows.push([day.name, ...settings.periods.map(() => '')]);
+  for (const period of settings.periods) {
+    rows.push([`${period.number} урок`, `${periodTime(settings, shiftId, period.number)} / ${period.duration} мин`, ...activeDays.map(() => '')]);
+  }
   return rows;
 }
 
@@ -1107,6 +1123,7 @@ function scheduleFromRows(rows) {
   const days = json.get('days').filter((day) => day.enabled);
   const periods = json.get('periods');
   const payload = { title: 'Импортированное расписание', weekMode: 'one', days, periods, shifts: json.get('shifts'), classMeta: {}, classes: {} };
+  if (fillScheduleFromHorizontalDayRows(payload, rows)) return payload;
   let currentClass = '';
   let currentShift = 'morning';
   for (const row of rows) {
@@ -1155,6 +1172,67 @@ function scheduleFromRows(rows) {
     payload.classes[className].single[day.id][Number(periodNumber)] = { subject: subject || '', teacher: teacher || '', room: room || '', difficulty: Number.isFinite(difficulty) ? difficulty : 3 };
   }
   return payload;
+}
+
+function fillScheduleFromHorizontalDayRows(payload, rows) {
+  let currentClass = '';
+  let currentShift = 'morning';
+  let layout = null;
+  for (const row of rows) {
+    const first = String(row[0] || '').trim();
+    const second = String(row[1] || '').trim();
+    if (same(first, 'Класс') && second && !same(second, 'Смена') && !row[4]) {
+      currentClass = second;
+      if (same(row[2], 'Смена')) currentShift = shiftIdFromLabel(payload, row[3]) || currentShift;
+      payload.classMeta[currentClass] ||= { shift: currentShift };
+      continue;
+    }
+
+    const header = horizontalScheduleHeader(row, payload.days);
+    if (header) {
+      layout = header;
+      continue;
+    }
+    if (!layout) continue;
+
+    const className = layout.classIndex == null ? currentClass : String(row[layout.classIndex] || '').trim();
+    const shiftText = layout.shiftIndex == null ? currentShift : row[layout.shiftIndex];
+    const periodNumber = parsePeriodNumber(row[layout.periodIndex]);
+    if (!className || !periodNumber) continue;
+
+    payload.classes[className] ||= { single: {} };
+    payload.classMeta[className] ||= { shift: shiftIdFromLabel(payload, shiftText) || currentShift || 'morning' };
+    for (const column of layout.dayColumns) {
+      const cell = parseTemplateLessonCell(row[column.index]);
+      if (!cell) continue;
+      payload.classes[className].single[column.day.id] ||= {};
+      payload.classes[className].single[column.day.id][periodNumber] = cell;
+    }
+  }
+  return Object.keys(payload.classes).length > 0;
+}
+
+function horizontalScheduleHeader(row, days) {
+  const labels = row.map((value) => String(value || '').trim().toLowerCase());
+  const periodIndex = labels.findIndex((value) => value === 'урок' || value === 'номер урока');
+  if (periodIndex === -1) return null;
+  const dayColumns = [];
+  for (const day of days) {
+    const index = labels.findIndex((value) => value === day.name.toLowerCase());
+    if (index !== -1) dayColumns.push({ day, index });
+  }
+  if (!dayColumns.length) return null;
+  return {
+    classIndex: labels.indexOf('класс') === -1 ? null : labels.indexOf('класс'),
+    shiftIndex: labels.indexOf('смена') === -1 ? null : labels.indexOf('смена'),
+    periodIndex,
+    dayColumns
+  };
+}
+
+function parsePeriodNumber(value) {
+  const match = String(value || '').match(/\d+/);
+  return match ? Number(match[0]) : 0;
 }
 
 function fillScheduleFromWideRows(payload, rows, header) {

@@ -97,7 +97,9 @@ if (scheduleTemplate.body.slice(0, 2).toString() !== 'PK') throw new Error('Ша
 if (teachersTemplate.body.slice(0, 2).toString() !== 'PK') throw new Error('Шаблон учителей неверный');
 if (!xlsxText(classesTemplate.body).includes('Шаблон') && classesTemplate.body.slice(0, 2).toString() !== 'PK') throw new Error('Шаблон классов неверный');
 if (advisorsTemplate.body.slice(0, 2).toString() !== 'PK') throw new Error('Шаблон руководителей неверный');
-if (!xlsxText(scheduleTemplate.body).includes('Общее расписание') || !xlsxText(scheduleTemplate.body).includes('Формат ячейки')) throw new Error('Шаблон расписания не в виде общей сетки');
+const scheduleTemplateText = xlsxText(scheduleTemplate.body);
+if (!scheduleTemplateText.includes('Общее расписание') || !scheduleTemplateText.includes('Формат ячейки')) throw new Error('Шаблон расписания не в виде общей сетки');
+if (!scheduleTemplateText.includes('Дни недели идут горизонтально') || !scheduleTemplateText.includes('Понедельник') || !scheduleTemplateText.includes('Урок')) throw new Error('Шаблон расписания должен иметь дни по горизонтали');
 if (!xlsxText(teachersTemplate.body).includes('Предмет 10')) throw new Error('Шаблон учителей не рассчитан на много предметов');
 if (schedule.schedule.classes['1А'].single.mon[1]) throw new Error('Глобальная блокировка понедельник 1 урок не сработала');
 if (!gridExport.name.includes(encodeURIComponent(`Все-расписание-сеткой-${schedule.id}.xlsx`))) throw new Error('Имя файла сеточного расписания неверное');
