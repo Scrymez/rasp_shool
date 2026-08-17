@@ -127,6 +127,7 @@ export function migrate() {
     );
   `);
   ensureColumn('assignments', 'room_id', 'INTEGER');
+  ensureColumn('assignments', 'paired', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('classes', 'shift', "TEXT NOT NULL DEFAULT 'morning'");
   ensureColumn('teacher_constraints', 'shift', 'TEXT');
   ensureColumn('schedule_blocks', 'class_id', 'INTEGER');
@@ -364,7 +365,7 @@ export function allScheduleBlocks() {
 export function allAssignments() {
   return db.prepare(`
     SELECT a.id, a.class_id AS classId, a.subject_id AS subjectId, a.teacher_id AS teacherId,
-           a.room_id AS roomId, a.weekly_hours AS weeklyHours, s.name AS subjectName, s.difficulty,
+           a.room_id AS roomId, a.weekly_hours AS weeklyHours, a.paired AS paired, s.name AS subjectName, s.difficulty,
            t.full_name AS teacherName, r.name AS roomName, c.grade, c.letter, c.level, c.shift
     FROM assignments a
     JOIN subjects s ON s.id = a.subject_id

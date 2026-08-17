@@ -305,6 +305,22 @@ app.get('/api/templates/schedule.xlsx', (_req, res) => {
   sendXlsx(res, 'Шаблон-расписания-всей-школы.xlsx', sheets);
 });
 
+app.get('/api/templates/rooms.xlsx', (_req, res) => {
+  const headers = ['Номер кабинета', 'Назначение', 'Количество мест'];
+  sendXlsx(res, 'Шаблон-импорта-кабинетов.xlsx', [
+    { name: 'Кабинеты', rows: [headers, ...Array.from({ length: 120 }, () => ['', '', ''])] },
+    { name: 'Пример', rows: [headers, ['101', 'Обычный', 30], ['Спортзал', 'Спорт', 60], ['Информатика', 'Компьютерный', 24]] }
+  ]);
+});
+
+app.get('/api/templates/subjects.xlsx', (_req, res) => {
+  const headers = ['Предмет', 'Уровни', 'Параллели', 'Сложность', 'Часы в неделю'];
+  sendXlsx(res, 'Шаблон-импорта-предметов.xlsx', [
+    { name: 'Предметы', rows: [headers, ...Array.from({ length: 120 }, () => ['', '', '', '', ''])] },
+    { name: 'Пример', rows: [headers, ['Математика', 'НОО, ООО', '1, 2, 3, 4, 5', 5, 5], ['Физкультура', 'НОО, ООО, СОО', '1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11', 1, 3]] }
+  ]);
+});
+
 app.post('/api/teachers', (req, res) => {
   const body = z.object({
     fullName: z.string().min(3),
@@ -360,6 +376,24 @@ app.delete('/api/teachers/by-name/:fullName', (req, res) => {
   if (!rows.length) return res.status(404).json({ error: 'Учитель не найден' });
   db.prepare('DELETE FROM teachers WHERE lower(full_name) = lower(?)').run(fullName);
   audit('delete', 'teacher', { fullName, count: rows.length });
+  res.json({ teachers: allTeachers(), assignments: allAssignments() });
+});
+
+app.post('/api/teachers/rename', (req, res) => {
+  const body = z.object({
+    oldName: z.string().min(1),
+    newName: z.string().min(3)
+  }).parse(req.body);
+  const oldName = body.oldName.trim();
+  const newName = body.newName.trim();
+  const existing = db.prepare('SELECT COUNT(*) AS count FROM teachers WHERE lower(full_name) = lower(?)').get(oldName);
+  if (!existing.count) return res.status(404).json({ error: 'Учитель не найден' });
+  if (oldName.toLowerCase() !== newName.toLowerCase()) {
+    const clash = db.prepare('SELECT COUNT(*) AS count FROM teachers WHERE lower(full_name) = lower(?)').get(newName);
+    if (clash.count) return res.status(409).json({ error: 'Учитель с таким ФИО уже есть' });
+  }
+  db.prepare('UPDATE teachers SET full_name = ? WHERE lower(full_name) = lower(?)').run(newName, oldName);
+  audit('rename', 'teacher', { oldName, newName });
   res.json({ teachers: allTeachers(), assignments: allAssignments() });
 });
 
@@ -442,15 +476,16 @@ app.post('/api/assignments', (req, res) => {
     subjectId: z.number(),
     teacherId: z.number().nullable().optional(),
     roomId: z.number().nullable().optional(),
-    weeklyHours: z.number().min(1).max(10)
+    weeklyHours: z.number().min(1).max(10),
+    paired: z.union([z.boolean(), z.number()]).optional()
   })).parse(req.body.assignments || []);
   const stmt = db.prepare(`
-    INSERT INTO assignments (class_id, subject_id, teacher_id, room_id, weekly_hours)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO assignments (class_id, subject_id, teacher_id, room_id, weekly_hours, paired)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(class_id, subject_id) DO UPDATE SET teacher_id = excluded.teacher_id,
-      room_id = excluded.room_id, weekly_hours = excluded.weekly_hours
+      room_id = excluded.room_id, weekly_hours = excluded.weekly_hours, paired = excluded.paired
   `);
-  runTransaction(() => rows.forEach((row) => stmt.run(row.classId, row.subjectId, row.teacherId || null, row.roomId || null, row.weeklyHours)));
+  runTransaction(() => rows.forEach((row) => stmt.run(row.classId, row.subjectId, row.teacherId || null, row.roomId || null, row.weeklyHours, row.paired ? 1 : 0)));
   audit('upsert', 'assignments', { count: rows.length });
   res.json({ assignments: allAssignments() });
 });
@@ -1562,7 +1597,7 @@ function restoreBackup(backup) {
     insertRows('rooms', backup.rooms || [], ['id', 'name', 'room_type', 'capacity']);
     insertRows('class_advisors', backup.classAdvisors || [], ['class_id', 'teacher_id']);
     insertRows('class_advisor_assignments', backup.classAdvisorAssignments || [], ['id', 'class_id', 'teacher_id', 'room_id', 'shift', 'note']);
-    insertRows('assignments', backup.assignments || [], ['id', 'class_id', 'subject_id', 'teacher_id', 'room_id', 'weekly_hours']);
+    insertRows('assignments', backup.assignments || [], ['id', 'class_id', 'subject_id', 'teacher_id', 'room_id', 'weekly_hours', 'paired']);
     insertRows('teacher_constraints', backup.teacherConstraints || [], ['id', 'teacher_id', 'day_id', 'shift', 'period_number', 'kind']);
     insertRows('schedule_blocks', backup.scheduleBlocks || [], ['id', 'day_id', 'shift', 'class_id', 'period_number', 'reason']);
     insertRows('settings', backup.settings || [], ['key', 'value']);

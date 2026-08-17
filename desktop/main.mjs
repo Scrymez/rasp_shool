@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import electronUpdater from 'electron-updater';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,6 +11,11 @@ const port = Number(process.env.PORT || 4173);
 let server;
 let mainWindow;
 let updateStatus = { state: 'idle', message: 'Обновления не проверялись' };
+let currentProjectPath = null;
+const PROJECT_FILTERS = [
+  { name: 'Проект Аманат Расписание', extensions: ['amanat'] },
+  { name: 'JSON', extensions: ['json'] }
+];
 let runtimeStatus = { state: 'starting', message: 'Проверяем компоненты Windows...', components: [] };
 
 process.env.NODE_ENV = 'production';
@@ -124,6 +129,54 @@ ipcMain.handle('update:install', () => {
 
 ipcMain.handle('update:status', () => updateStatus);
 ipcMain.handle('runtime:status', () => runtimeStatus);
+
+function projectInfo(filePath) {
+  return { ok: true, path: filePath, name: path.basename(filePath) };
+}
+
+async function writeProject(filePath, contents) {
+  await fs.promises.writeFile(filePath, contents, 'utf8');
+  currentProjectPath = filePath;
+  mainWindow?.setTitle(`${path.basename(filePath)} — Аманат Расписание`);
+  return projectInfo(filePath);
+}
+
+async function askSavePath() {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Сохранить проект расписания',
+    defaultPath: currentProjectPath || path.join(app.getPath('documents'), 'Расписание.amanat'),
+    filters: PROJECT_FILTERS
+  });
+  return result.canceled ? null : result.filePath;
+}
+
+ipcMain.handle('project:current', () => currentProjectPath ? projectInfo(currentProjectPath) : { ok: false });
+
+ipcMain.handle('project:save', async (_event, contents) => {
+  const filePath = currentProjectPath || await askSavePath();
+  if (!filePath) return { ok: false, canceled: true };
+  return writeProject(filePath, contents);
+});
+
+ipcMain.handle('project:saveAs', async (_event, contents) => {
+  const filePath = await askSavePath();
+  if (!filePath) return { ok: false, canceled: true };
+  return writeProject(filePath, contents);
+});
+
+ipcMain.handle('project:open', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Открыть проект расписания',
+    properties: ['openFile'],
+    filters: PROJECT_FILTERS
+  });
+  if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true };
+  const filePath = result.filePaths[0];
+  const contents = await fs.promises.readFile(filePath, 'utf8');
+  currentProjectPath = filePath;
+  mainWindow?.setTitle(`${path.basename(filePath)} — Аманат Расписание`);
+  return { ...projectInfo(filePath), contents };
+});
 
 async function waitForServer(url) {
   const startedAt = Date.now();

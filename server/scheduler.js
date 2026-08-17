@@ -74,7 +74,8 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
           teacherId: lesson.teacherId || null,
           room: lesson.roomName || '',
           roomId: lesson.roomId || null,
-          difficulty: lesson.difficulty
+          difficulty: lesson.difficulty,
+          paired: lesson.paired ? 1 : 0
         };
         payload.classes[key][variant][slot.day.id][slot.period.number] = cell;
         reserveResource({ busy, settings, variant, shift, dayId: slot.day.id, period: slot.period, lesson });
@@ -157,14 +158,24 @@ function slotScore({ grid, days, day, period, lesson, settings, schoolClass, str
   const targetLoad = targetDayLoad(grid, days);
   const loadPenalty = Math.abs((beforeLoad + 1) - targetLoad) * 12;
   const difficultyPenalty = Math.max(0, dayDifficulty(projectedGrid, day.id) - averageDifficulty(projectedGrid, days)) * 3;
-  const repeatPenalty = subjectAlreadyOnDay(grid, day.id, lesson.subjectName) ? 80 : 0;
-  const spreadPenalty = sameSubjectNearDays(grid, days, day.id, lesson.subjectName) * 16;
+  const sameSubjectPeriodsToday = Object.entries(grid[day.id] || {})
+    .filter(([, cell]) => cell?.subject === lesson.subjectName)
+    .map(([number]) => Number(number));
+  const repeatPenalty = lesson.paired ? 0 : (sameSubjectPeriodsToday.length ? 80 : 0);
+  const spreadPenalty = lesson.paired ? 0 : sameSubjectNearDays(grid, days, day.id, lesson.subjectName) * 16;
+  const pairPenalty = pairAdjacencyPenalty(lesson, sameSubjectPeriodsToday, period.number);
   const periodPenalty = preferredPeriodPenalty(period.number, lesson.difficulty);
   const gapPenalty = classWindowCount(projectedGrid) * (strategy.name === 'compact' ? 32 : 20);
   const lateHardPenalty = lesson.difficulty >= 4 && period.number >= 5 ? 34 : 0;
   const firstLessonEasyPenalty = lesson.difficulty <= 2 && period.number === 1 ? 16 : 0;
   const overloadRisk = dayDifficulty(projectedGrid, day.id) / maxDailyDifficulty(settings, schoolClass.grade);
-  return loadPenalty + difficultyPenalty + repeatPenalty + spreadPenalty + periodPenalty + gapPenalty + lateHardPenalty + firstLessonEasyPenalty + overloadRisk;
+  return loadPenalty + difficultyPenalty + repeatPenalty + spreadPenalty + pairPenalty + periodPenalty + gapPenalty + lateHardPenalty + firstLessonEasyPenalty + overloadRisk;
+}
+
+function pairAdjacencyPenalty(lesson, sameSubjectPeriodsToday, periodNumber) {
+  if (!lesson.paired || !sameSubjectPeriodsToday.length) return 0;
+  const adjacent = sameSubjectPeriodsToday.some((number) => Math.abs(number - periodNumber) === 1);
+  return adjacent ? -140 : 90;
 }
 
 function preferredPeriodPenalty(periodNumber, difficulty) {
@@ -324,7 +335,7 @@ function repeatedSubjects(payload) {
       for (const day of payload.days) {
         const counts = new Map();
         for (const cell of Object.values(grid[day.id] || {})) {
-          if (!cell?.subject) continue;
+          if (!cell?.subject || cell.paired) continue;
           counts.set(cell.subject, (counts.get(cell.subject) || 0) + 1);
         }
         for (const count of counts.values()) if (count > 1) total += count - 1;

@@ -12,6 +12,13 @@ contextBridge.exposeInMainWorld('schoolUpdater', {
   }
 });
 
+contextBridge.exposeInMainWorld('projectFile', {
+  save: (contents) => ipcRenderer.invoke('project:save', contents),
+  saveAs: (contents) => ipcRenderer.invoke('project:saveAs', contents),
+  open: () => ipcRenderer.invoke('project:open'),
+  current: () => ipcRenderer.invoke('project:current')
+});
+
 contextBridge.exposeInMainWorld('schoolRuntime', {
   status: () => ipcRenderer.invoke('runtime:status'),
   onStatus: (callback) => {

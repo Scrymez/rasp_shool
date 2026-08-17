@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import {
   BarChart3, BookOpen, CalendarDays, Check, ChevronRight, Database, Download, FileDown, FileSpreadsheet,
-  DoorOpen, KeyRound, MoonStar, Play, Plus, Printer, Save, School,
+  DoorOpen, FolderOpen, KeyRound, MoonStar, Pencil, Play, Plus, Printer, Save, SaveAll, School,
   RefreshCw, ShieldCheck, Sparkles, Trash2, Upload, Users, X
 } from 'lucide-react';
 import './styles.css';
@@ -43,6 +43,8 @@ function App() {
   const [trainingOpen, setTrainingOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState(null);
   const [runtimeStatus, setRuntimeStatus] = useState(null);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [projectName, setProjectName] = useState('');
 
   async function refresh() {
     const data = await api('/bootstrap');
@@ -76,6 +78,43 @@ function App() {
     setNotice('Черновик загружен');
   }
 
+  async function saveProject(asNew = false) {
+    if (!window.projectFile) return;
+    try {
+      const contents = await apiText('/backup.json');
+      const result = asNew ? await window.projectFile.saveAs(contents) : await window.projectFile.save(contents);
+      if (result?.canceled) return;
+      if (!result?.ok) {
+        setNotice('Не удалось сохранить файл');
+        return;
+      }
+      setProjectName(result.name);
+      setNotice(`Проект сохранен: ${result.name}`);
+    } catch {
+      setNotice('Не удалось сохранить проект');
+    }
+  }
+
+  async function openProject() {
+    if (!window.projectFile) return;
+    try {
+      const result = await window.projectFile.open();
+      if (result?.canceled) return;
+      if (!result?.ok || !result.contents) {
+        setNotice('Не удалось открыть файл');
+        return;
+      }
+      const backup = JSON.parse(result.contents);
+      await api('/restore', { method: 'POST', body: { backup } });
+      await refresh();
+      setSchedule(null);
+      setProjectName(result.name);
+      setNotice(`Проект открыт: ${result.name}`);
+    } catch {
+      setNotice('Файл проекта поврежден или неверный');
+    }
+  }
+
   useEffect(() => {
     if (!logged) return;
     refresh().catch((error) => {
@@ -100,6 +139,11 @@ function App() {
     if (!window.schoolRuntime) return undefined;
     window.schoolRuntime.status().then(setRuntimeStatus).catch(() => {});
     return window.schoolRuntime.onStatus(setRuntimeStatus);
+  }, []);
+
+  useEffect(() => {
+    if (!window.projectFile) return;
+    window.projectFile.current().then((info) => { if (info?.ok) setProjectName(info.name); }).catch(() => {});
   }, []);
 
   if (!logged) {
@@ -139,12 +183,20 @@ function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Мастер составления</p>
+            <p className="eyebrow">{projectName ? `Файл: ${projectName}` : 'Мастер составления'}</p>
             <h1>{STEPS[step][0]}</h1>
           </div>
           <div className="topbar-actions">
             {notice && <output>{notice}</output>}
             {window.schoolUpdater && <UpdateControl status={updateStatus} setNotice={setNotice} />}
+            <button onClick={() => setTemplatesOpen(true)}><FileSpreadsheet size={18} /> Шаблоны импорта</button>
+            {window.projectFile && (
+              <>
+                <button onClick={() => saveProject(false)}><Save size={18} /> Сохранить</button>
+                <button onClick={() => saveProject(true)}><SaveAll size={18} /> Сохранить как</button>
+                <button onClick={openProject}><FolderOpen size={18} /> Открыть</button>
+              </>
+            )}
             <button onClick={() => setTrainingOpen(true)}><BookOpen size={18} /> Обучение</button>
             {hasDraft && <button onClick={loadDraft}><FileDown size={18} /> Загрузить черновик</button>}
             <button onClick={async () => {
@@ -163,6 +215,12 @@ function App() {
           {trainingOpen && (
             <ModalFrame label="Обучение настройке расписания" className="training-modal" onClose={() => setTrainingOpen(false)}>
               <TrainingPanel onClose={() => setTrainingOpen(false)} />
+            </ModalFrame>
+          )}
+
+          {templatesOpen && (
+            <ModalFrame label="Шаблоны импорта" className="training-modal" onClose={() => setTemplatesOpen(false)}>
+              <TemplatesPanel onClose={() => setTemplatesOpen(false)} setNotice={setNotice} />
             </ModalFrame>
           )}
 
@@ -323,6 +381,37 @@ function TrainingPanel({ onClose }) {
   );
 }
 
+function TemplatesPanel({ onClose, setNotice }) {
+  const templates = [
+    ['Классы', '/templates/classes.xlsx', School],
+    ['Предметы', '/templates/subjects.xlsx', BookOpen],
+    ['Учителя', '/templates/teachers.xlsx', Users],
+    ['Кабинеты', '/templates/rooms.xlsx', DoorOpen],
+    ['Классные руководители', '/templates/class-advisors.xlsx', Users],
+    ['Расписание всей школы', '/templates/schedule.xlsx', FileSpreadsheet]
+  ];
+  async function grab(path) {
+    await downloadFile(path);
+    setNotice('Шаблон скачан');
+  }
+  return (
+    <div className="training-panel">
+      <div className="training-head">
+        <div>
+          <p className="eyebrow">импорт</p>
+          <h2>Шаблоны импорта</h2>
+        </div>
+      </div>
+      <p className="rules-lead">Скачайте нужный шаблон Excel, заполните его и загрузите кнопкой импорта на соответствующем шаге.</p>
+      <div className="templates-grid">
+        {templates.map(([label, path, Icon]) => (
+          <button key={path} className="export-link" onClick={() => grab(path)}><Icon size={18} /> {label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function UpdateControl({ status, setNotice }) {
   const [open, setOpen] = useState(false);
   const state = status?.state || 'idle';
@@ -382,7 +471,6 @@ function Classes({ state, refresh, setNotice }) {
         <PanelTitle icon={School} title="Создать классы" />
         <div className="segmented">
           <FileUpload label="Импорт классов" endpoint="/import/classes" refresh={refresh} setNotice={setNotice} />
-          <button onClick={() => downloadFile('/templates/classes.xlsx')}><FileSpreadsheet size={18} /> Шаблон классов</button>
         </div>
         <div className="segmented">{LEVELS.map((level) => <button key={level} onClick={() => addLevel(level)}><Plus size={16} /> {level}</button>)}</div>
         <div className="row-edit class-row header-row">
@@ -577,6 +665,7 @@ function Teachers({ state, refresh, setNotice }) {
   const [selectedTeacher, setSelectedTeacher] = useState(teacherGroups[0]?.fullName || '');
   const [extraSubjectText, setExtraSubjectText] = useState('');
   const [advisorRows, setAdvisorRows] = useState([]);
+  const [editing, setEditing] = useState(null);
 
   useEffect(() => {
     if (!selectedTeacher && teacherGroups[0]) setSelectedTeacher(teacherGroups[0].fullName);
@@ -668,14 +757,16 @@ function Teachers({ state, refresh, setNotice }) {
         <div>{teacherGroups.length ? teacherGroups.map((item) => (
           <p className="action-line" key={item.fullName}>
             <span>{item.fullName} · {item.subjects.join(', ')}</span>
-            <button onClick={() => removeTeacher(item.fullName)} title="Удалить"><Trash2 size={16} /></button>
+            <span className="line-actions">
+              <button onClick={() => setEditing(item.fullName)} title="Редактировать"><Pencil size={16} /></button>
+              <button onClick={() => removeTeacher(item.fullName)} title="Удалить"><Trash2 size={16} /></button>
+            </span>
           </p>
         )) : <p className="hint">Пока пусто</p>}</div>
         <div className="manual-teacher">
           <h3>Классные руководители</h3>
           <div className="segmented">
             <FileUpload label="Импорт руководителей" endpoint="/import/class-advisors" refresh={refresh} setNotice={setNotice} />
-            <button onClick={() => downloadFile('/templates/class-advisors.xlsx')}><FileSpreadsheet size={18} /> Шаблон руководителей</button>
           </div>
           <div className="class-advisor-grid">
             {advisorRows.map((row, index) => {
@@ -709,7 +800,81 @@ function Teachers({ state, refresh, setNotice }) {
           <button className="primary" onClick={saveAdvisors}><Save size={18} /> Сохранить руководителей</button>
         </div>
       </div>
+      {editing && (
+        <ModalFrame label="Редактирование учителя" className="rules-modal" onClose={() => setEditing(null)}>
+          <TeacherEditModal fullName={editing} state={state} refresh={refresh} setNotice={setNotice} onClose={() => setEditing(null)} onRenamed={setEditing} />
+        </ModalFrame>
+      )}
     </section>
+  );
+}
+
+function TeacherEditModal({ fullName, state, refresh, setNotice, onClose, onRenamed }) {
+  const group = groupTeachers(state.teachers).find((item) => item.fullName === fullName);
+  const [name, setName] = useState(fullName);
+  const [extra, setExtra] = useState('');
+
+  async function rename() {
+    const nextName = name.trim();
+    if (nextName.length < 3 || nextName === fullName) {
+      setNotice('Введите новое ФИО');
+      return;
+    }
+    try {
+      await api('/teachers/rename', { method: 'POST', body: { oldName: fullName, newName: nextName } });
+      await refresh();
+      setNotice('ФИО обновлено');
+      onRenamed(nextName);
+    } catch (error) {
+      setNotice(error.status === 409 ? 'Учитель с таким ФИО уже есть' : 'Не удалось переименовать');
+    }
+  }
+
+  async function removeSubject(subjectName) {
+    const row = state.teachers.find((item) => item.fullName === fullName && item.subjectName === subjectName);
+    if (!row) return;
+    await api(`/teachers/${row.id}`, { method: 'DELETE' });
+    await refresh();
+    setNotice('Предмет убран');
+  }
+
+  async function addSubjects() {
+    const subjects = parseSubjectText(extra);
+    if (!subjects.length) return;
+    await api(`/teachers/${encodeURIComponent(fullName)}/subjects`, { method: 'POST', body: { subjects } });
+    setExtra('');
+    await refresh();
+    setNotice('Предметы добавлены');
+  }
+
+  return (
+    <div className="training-panel">
+      <div className="training-head">
+        <div>
+          <p className="eyebrow">учитель</p>
+          <h2>Редактирование учителя</h2>
+        </div>
+      </div>
+      <div className="manual-teacher">
+        <h3>ФИО</h3>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="ФИО учителя" />
+        <button className="primary" onClick={rename}><Save size={18} /> Переименовать</button>
+      </div>
+      <div className="manual-teacher">
+        <h3>Предметы</h3>
+        {group ? (
+          <div className="chip-list">
+            {group.subjects.map((subject) => (
+              <span className="chip" key={subject}>{subject}
+                <button onClick={() => removeSubject(subject)} title="Убрать предмет"><X size={14} /></button>
+              </span>
+            ))}
+          </div>
+        ) : <p className="hint">Учитель без предметов</p>}
+        <input value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Добавить предметы через запятую" />
+        <button onClick={addSubjects}><Plus size={18} /> Добавить предметы</button>
+      </div>
+    </div>
   );
 }
 
@@ -790,8 +955,9 @@ function Assignments({ state, refresh, setNotice }) {
   return (
     <section className="panel">
       <PanelTitle icon={Sparkles} title="Кто ведет какой урок" />
+      <p className="hint">Столбец «Подряд»: если в один день выпадает 2+ урока предмета (например, 2 технологии), генератор поставит их спаренно, друг за другом.</p>
       <div className="assignment-table">
-        <b>Класс</b><b>Предмет</b><b>Учитель</b><b>Кабинет</b><b>Часы</b>
+        <b>Класс</b><b>Предмет</b><b>Учитель</b><b>Кабинет</b><b>Часы</b><b>Подряд</b>
         {rows.slice(0, 120).map((row, index) => {
           const options = teachersBySubject.get(row.subjectName.toLowerCase()) || uniqueTeachersByName(state.teachers);
           return (
@@ -807,6 +973,9 @@ function Assignments({ state, refresh, setNotice }) {
                 {state.rooms.map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}
               </select>
               <input type="number" min="1" max="10" value={row.weeklyHours} onChange={(e) => updateRows(rows, setRows, index, 'weeklyHours', Number(e.target.value))} />
+              <span className="paired-cell">
+                <input type="checkbox" checked={!!row.paired} onChange={(e) => updateRows(rows, setRows, index, 'paired', e.target.checked)} title="Ставить уроки этого предмета подряд в один день" />
+              </span>
             </React.Fragment>
           );
         })}
@@ -1110,11 +1279,6 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
     setNotice('Отчеты скачаны');
   }
 
-  async function downloadTemplate(path) {
-    await downloadFile(path);
-    setNotice('Шаблон скачан');
-  }
-
   return (
     <section className="grid-two">
       <div className="panel">
@@ -1137,13 +1301,6 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
           <h3>О приложении</h3>
           <p className="hint"><b>{APP_NAME}</b></p>
           <p className="hint">Автор и разработчик: {APP_AUTHOR}</p>
-        </div>
-        <div className="manual-teacher">
-          <h3>Excel-шаблоны</h3>
-          <button className="export-link" onClick={() => downloadTemplate('/templates/schedule.xlsx')}><FileSpreadsheet size={18} /> Шаблон расписания</button>
-          <button className="export-link" onClick={() => downloadTemplate('/templates/teachers.xlsx')}><Users size={18} /> Шаблон импорта учителей</button>
-          <button className="export-link" onClick={() => downloadTemplate('/templates/classes.xlsx')}><School size={18} /> Шаблон импорта классов</button>
-          <button className="export-link" onClick={() => downloadTemplate('/templates/class-advisors.xlsx')}><Users size={18} /> Шаблон руководителей</button>
         </div>
         {runtimeStatus && (
           <div className="manual-teacher">
@@ -1626,6 +1783,19 @@ async function api(path, options = {}) {
     throw error;
   }
   return response.json();
+}
+
+async function apiText(path) {
+  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  const response = await fetch(`${API}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  });
+  if (!response.ok) {
+    const error = new Error(await response.text());
+    error.status = response.status;
+    throw error;
+  }
+  return response.text();
 }
 
 async function downloadFile(path) {
