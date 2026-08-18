@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import {
@@ -45,6 +45,18 @@ function App() {
   const [runtimeStatus, setRuntimeStatus] = useState(null);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [projectName, setProjectName] = useState('');
+  const editorCommit = useRef(null);
+
+  async function flushEditor() {
+    const commit = editorCommit.current;
+    if (typeof commit !== 'function') return;
+    try {
+      await commit();
+    } catch {
+      setNotice('Не удалось сохранить текущий раздел');
+    }
+  }
+  const registerCommit = (fn) => { editorCommit.current = fn; };
 
   async function refresh() {
     const data = await api('/bootstrap');
@@ -52,7 +64,8 @@ function App() {
     setSelectedClasses(data.classes.map((item) => item.id));
   }
 
-  function saveDraft() {
+  async function saveDraft() {
+    await flushEditor();
     localStorage.setItem(DRAFT_KEY, JSON.stringify({
       savedAt: new Date().toISOString(),
       step,
@@ -61,7 +74,7 @@ function App() {
       schedule
     }));
     setHasDraft(true);
-    setNotice('Черновик сохранен');
+    setNotice('Раздел и черновик сохранены');
   }
 
   function loadDraft() {
@@ -81,6 +94,7 @@ function App() {
   async function saveProject(asNew = false) {
     if (!window.projectFile) return;
     try {
+      await flushEditor();
       const contents = await apiText('/backup.json');
       const result = asNew ? await window.projectFile.saveAs(contents) : await window.projectFile.save(contents);
       if (result?.canceled) return;
@@ -225,12 +239,12 @@ function App() {
           )}
 
           {step === 0 && <Classes state={state} refresh={refresh} setNotice={setNotice} />}
-          {step === 1 && <Subjects state={state} refresh={refresh} setNotice={setNotice} />}
+          {step === 1 && <Subjects state={state} refresh={refresh} setNotice={setNotice} registerCommit={registerCommit} />}
           {step === 2 && <Teachers state={state} refresh={refresh} setNotice={setNotice} />}
           {step === 3 && <Rooms state={state} refresh={refresh} setNotice={setNotice} />}
-          {step === 4 && <Assignments state={state} refresh={refresh} setNotice={setNotice} />}
-          {step === 5 && <Constraints state={state} refresh={refresh} setNotice={setNotice} />}
-          {step === 6 && <TimeSettings state={state} refresh={refresh} setNotice={setNotice} />}
+          {step === 4 && <Assignments state={state} refresh={refresh} setNotice={setNotice} registerCommit={registerCommit} />}
+          {step === 5 && <Constraints state={state} refresh={refresh} setNotice={setNotice} registerCommit={registerCommit} />}
+          {step === 6 && <TimeSettings state={state} refresh={refresh} setNotice={setNotice} registerCommit={registerCommit} />}
           {step === 7 && <SystemPanel state={state} refresh={refresh} setNotice={setNotice} runtimeStatus={runtimeStatus} />}
           {step === 8 && (
             <Generate
@@ -510,7 +524,7 @@ function Classes({ state, refresh, setNotice }) {
   );
 }
 
-function Subjects({ state, refresh, setNotice }) {
+function Subjects({ state, refresh, setNotice, registerCommit }) {
   const [name, setName] = useState('');
   const [newDifficulty, setNewDifficulty] = useState(3);
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -556,6 +570,10 @@ function Subjects({ state, refresh, setNotice }) {
     await refresh();
     setNotice('Настройки предмета сохранены');
   }
+  useEffect(() => {
+    registerCommit?.(draft ? save : null);
+    return () => registerCommit?.(null);
+  }, [draft]);
   return (
     <section className="subject-editor">
       <div className="panel subject-list-panel">
@@ -936,7 +954,7 @@ function Rooms({ state, refresh, setNotice }) {
   );
 }
 
-function Assignments({ state, refresh, setNotice }) {
+function Assignments({ state, refresh, setNotice, registerCommit }) {
   const [rows, setRows] = useState(state.assignments);
   useEffect(() => setRows(state.assignments), [state.assignments]);
   const teachersBySubject = useMemo(() => {
@@ -952,6 +970,10 @@ function Assignments({ state, refresh, setNotice }) {
     await refresh();
     setNotice('Связки учитель-класс-предмет сохранены');
   }
+  useEffect(() => {
+    registerCommit?.(rows.length ? save : null);
+    return () => registerCommit?.(null);
+  }, [rows]);
   return (
     <section className="panel">
       <PanelTitle icon={Sparkles} title="Кто ведет какой урок" />
@@ -985,7 +1007,7 @@ function Assignments({ state, refresh, setNotice }) {
   );
 }
 
-function Constraints({ state, refresh, setNotice }) {
+function Constraints({ state, refresh, setNotice, registerCommit }) {
   const [rows, setRows] = useState(state.teacherConstraints.length ? state.teacherConstraints : []);
   const [blocks, setBlocks] = useState(state.scheduleBlocks || []);
   const uniqueTeachers = useMemo(() => uniqueTeachersByName(state.teachers), [state.teachers]);
@@ -1010,6 +1032,10 @@ function Constraints({ state, refresh, setNotice }) {
     await refresh();
     setNotice('Ограничения сохранены');
   }
+  useEffect(() => {
+    registerCommit?.(save);
+    return () => registerCommit?.(null);
+  }, [rows, blocks]);
   function addTeacherFromPeriod(teacherId, startPeriod, dayId = '') {
     const days = dayId ? state.settings.days.filter((day) => day.id === dayId) : state.settings.days.filter((day) => day.enabled);
     const periods = state.settings.periods.filter((period) => period.number < Number(startPeriod));
@@ -1145,7 +1171,7 @@ function Constraints({ state, refresh, setNotice }) {
   );
 }
 
-function TimeSettings({ state, refresh, setNotice }) {
+function TimeSettings({ state, refresh, setNotice, registerCommit }) {
   const [days, setDays] = useState(state.settings.days);
   const [periods, setPeriods] = useState(() => normalizePeriodsForEditor(state.settings.periods, state.settings.shifts));
   const [shifts, setShifts] = useState(state.settings.shifts || SHIFTS.map((shift) => ({ ...shift, startsAt: shift.id === 'morning' ? '08:30' : '14:00' })));
@@ -1156,6 +1182,11 @@ function TimeSettings({ state, refresh, setNotice }) {
     await refresh();
     setNotice('Неделя и перемены настроены');
   }
+
+  useEffect(() => {
+    registerCommit?.(save);
+    return () => registerCommit?.(null);
+  }, [days, periods, shifts, sanpin]);
 
   function updatePeriod(index, key, value) {
     setPeriods(periods.map((period, periodIndex) => periodIndex === index ? { ...period, [key]: value } : period));
