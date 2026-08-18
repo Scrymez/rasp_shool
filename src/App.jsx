@@ -466,6 +466,8 @@ function UpdateControl({ status, setNotice }) {
 
 function Classes({ state, refresh, setNotice }) {
   const [rows, setRows] = useState([{ level: 'НОО', grade: 1, letter: 'А', shift: 'morning' }]);
+  const [gradeFilter, setGradeFilter] = useState('all');
+  const presentGrades = useMemo(() => [...new Set(state.classes.map((item) => item.grade))].sort((a, b) => a - b), [state.classes]);
   function addLevel(level) {
     setRows([...rows, { level, grade: level === 'НОО' ? 1 : level === 'ООО' ? 5 : 10, letter: 'А', shift: level === 'СОО' ? 'afternoon' : 'morning' }]);
   }
@@ -507,13 +509,15 @@ function Classes({ state, refresh, setNotice }) {
       </div>
       <div className="panel list-panel">
         <PanelTitle icon={FileSpreadsheet} title="Созданные классы" />
-        <div className="row-edit class-row header-row">
-          <b>Уровень образования</b>
-          <b>Параллель</b>
-          <b>Литерал</b>
-          <b>Смена</b>
+        <div className="filter-bar">
+          <label>Параллель</label>
+          <select value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}>
+            <option value="all">Все параллели</option>
+            {presentGrades.map((grade) => <option value={grade} key={grade}>{grade} параллель</option>)}
+          </select>
+          <span className="filter-count">{state.classes.filter((item) => gradeFilter === 'all' || item.grade === gradeFilter).length} классов</span>
         </div>
-        <div>{state.classes.length ? state.classes.map((item) => (
+        <div>{state.classes.length ? state.classes.filter((item) => gradeFilter === 'all' || item.grade === gradeFilter).map((item) => (
           <p className="action-line" key={item.id}>
             <span>{item.grade}{item.letter} · {item.level} · {shiftName(state, item.shift)}</span>
             <button onClick={() => remove(item.id)} title="Удалить"><Trash2 size={16} /></button>
@@ -574,7 +578,8 @@ function Subjects({ state, refresh, setNotice, registerCommit }) {
         grades,
         difficulty: Number(draft.difficulty),
         weeklyHours: Math.max(1, ...Object.values(parallelHours).map(Number), 1),
-        parallelHours
+        parallelHours,
+        unlocked: !!draft.unlocked
       }] } });
       await refresh();
       setNotice('Настройки предмета сохранены');
@@ -639,17 +644,29 @@ function Subjects({ state, refresh, setNotice, registerCommit }) {
               <span className={`difficulty-pill difficulty-${draft.difficulty}`}>{draft.difficulty}/5 · {difficultyLabel(draft.difficulty)}</span>
               <span>{difficultyDescription(draft.difficulty)}</span>
             </p>
+            {(draft.allowedGrades?.length > 0) && (
+              <label className="unlock-toggle">
+                <input type="checkbox" checked={!!draft.unlocked} onChange={(e) => setDraft({ ...draft, unlocked: e.target.checked })} />
+                <span>
+                  {draft.unlocked
+                    ? 'Разблокировано: можно привязать любую параллель'
+                    : `Разрешены параллели: ${draft.allowedGrades.join(', ')}. Остальные заблокированы — включите, чтобы разблокировать.`}
+                </span>
+              </label>
+            )}
             <div className="parallel-grid">
               <b>Параллель</b><b>Часов в неделю</b><b>Привязка</b>
               {Array.from({ length: 11 }, (_, i) => i + 1).map((grade) => {
                 const hours = Number(draft.parallelHours?.[grade] || 0);
+                const restricted = (draft.allowedGrades?.length > 0) && !draft.allowedGrades.includes(grade);
+                const locked = restricted && !draft.unlocked;
                 return (
                   <React.Fragment key={grade}>
-                    <span>{grade}</span>
-                    <input type="number" min="0" max="12" value={hours} onChange={(e) => setDraft({ ...draft, parallelHours: { ...draft.parallelHours, [grade]: Number(e.target.value) } })} />
+                    <span>{grade}{restricted && <small className="grade-flag">{locked ? ' 🔒' : ' вне ФГОС'}</small>}</span>
+                    <input type="number" min="0" max="12" value={locked ? 0 : hours} disabled={locked} onChange={(e) => setDraft({ ...draft, parallelHours: { ...draft.parallelHours, [grade]: Number(e.target.value) } })} />
                     <label>
-                      <input type="checkbox" checked={hours > 0} onChange={(e) => setDraft({ ...draft, parallelHours: { ...draft.parallelHours, [grade]: e.target.checked ? Math.max(1, hours || 1) : 0 } })} />
-                      {hours > 0 ? 'активна' : 'нет'}
+                      <input type="checkbox" disabled={locked} checked={hours > 0} onChange={(e) => setDraft({ ...draft, parallelHours: { ...draft.parallelHours, [grade]: e.target.checked ? Math.max(1, hours || 1) : 0 } })} />
+                      {locked ? 'заблокировано' : hours > 0 ? 'активна' : 'нет'}
                     </label>
                   </React.Fragment>
                 );
@@ -973,7 +990,13 @@ function Rooms({ state, refresh, setNotice }) {
 
 function Assignments({ state, refresh, setNotice, registerCommit }) {
   const [rows, setRows] = useState(state.assignments);
+  const [classFilter, setClassFilter] = useState(state.classes[0]?.id ?? 'all');
   useEffect(() => setRows(state.assignments), [state.assignments]);
+  useEffect(() => {
+    if (classFilter !== 'all' && !state.classes.some((item) => item.id === classFilter)) {
+      setClassFilter(state.classes[0]?.id ?? 'all');
+    }
+  }, [state.classes]);
   const teachersBySubject = useMemo(() => {
     const map = new Map();
     for (const teacher of state.teachers) {
@@ -995,9 +1018,18 @@ function Assignments({ state, refresh, setNotice, registerCommit }) {
     <section className="panel">
       <PanelTitle icon={Sparkles} title="Кто ведет какой урок" />
       <p className="hint">Столбец «Подряд»: если в один день выпадает 2+ урока предмета (например, 2 технологии), генератор поставит их спаренно, друг за другом.</p>
+      <div className="filter-bar">
+        <label>Класс</label>
+        <select value={classFilter} onChange={(e) => setClassFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}>
+          <option value="all">Все классы</option>
+          {state.classes.map((item) => <option value={item.id} key={item.id}>{item.grade}{item.letter} · {shiftName(state, item.shift)}</option>)}
+        </select>
+        <span className="filter-count">{rows.filter((row) => classFilter === 'all' || row.classId === classFilter).length} строк</span>
+      </div>
       <div className="assignment-table">
         <b>Класс</b><b>Предмет</b><b>Учитель</b><b>Кабинет</b><b>Часы</b><b>Подряд</b>
-        {rows.slice(0, 120).map((row, index) => {
+        {rows.map((row, index) => {
+          if (classFilter !== 'all' && row.classId !== classFilter) return null;
           const options = teachersBySubject.get(row.subjectName.toLowerCase()) || uniqueTeachersByName(state.teachers);
           return (
             <React.Fragment key={row.id}>
@@ -1685,6 +1717,7 @@ function subjectDirty(draft, selected) {
   if (!draft || !selected) return false;
   if (draft.name.trim() !== selected.name) return true;
   if (Number(draft.difficulty) !== Number(selected.difficulty)) return true;
+  if (Boolean(draft.unlocked) !== Boolean(selected.unlocked)) return true;
   const norm = (source) => JSON.stringify(
     Object.entries(source || {}).map(([grade, hours]) => [Number(grade), Number(hours)]).filter(([, hours]) => hours > 0).sort((a, b) => a[0] - b[0])
   );

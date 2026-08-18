@@ -168,19 +168,29 @@ app.post('/api/subjects', (req, res) => {
     grades: z.array(z.number()).default([]),
     difficulty: z.number().min(1).max(5).default(3),
     weeklyHours: z.number().min(1).max(8).default(1),
-    parallelHours: z.record(z.string(), z.number().min(0).max(12)).optional()
+    parallelHours: z.record(z.string(), z.number().min(0).max(12)).optional(),
+    allowedGrades: z.array(z.number()).optional(),
+    unlocked: z.union([z.boolean(), z.number()]).optional()
   })).parse(req.body.subjects || []);
   const stmt = db.prepare(`
-    INSERT INTO subjects (name, levels, grades, difficulty, weekly_hours)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO subjects (name, levels, grades, difficulty, weekly_hours, allowed_grades, unlocked)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET levels = excluded.levels, grades = excluded.grades,
-      difficulty = excluded.difficulty, weekly_hours = excluded.weekly_hours
+      difficulty = excluded.difficulty, weekly_hours = excluded.weekly_hours,
+      allowed_grades = excluded.allowed_grades, unlocked = excluded.unlocked
   `);
   runTransaction(() => rows.forEach((row) => {
-    const parallelHours = normalizeParallelHours(row.parallelHours, row.grades, row.weeklyHours);
+    const name = row.name.trim();
+    const existing = db.prepare('SELECT allowed_grades, unlocked FROM subjects WHERE name = ?').get(name);
+    const allowedGrades = existing ? JSON.parse(existing.allowed_grades || '[]') : (row.allowedGrades || []);
+    const unlocked = row.unlocked != null ? (row.unlocked ? 1 : 0) : (existing ? existing.unlocked : 0);
+    let parallelHours = normalizeParallelHours(row.parallelHours, row.grades, row.weeklyHours);
+    if (!unlocked && allowedGrades.length) {
+      parallelHours = Object.fromEntries(Object.entries(parallelHours).filter(([grade]) => allowedGrades.includes(Number(grade))));
+    }
     const grades = Object.keys(parallelHours).map(Number).sort((a, b) => a - b);
-    stmt.run(row.name.trim(), JSON.stringify(row.levels), JSON.stringify(grades), row.difficulty, row.weeklyHours);
-    const subject = db.prepare('SELECT id FROM subjects WHERE name = ?').get(row.name.trim());
+    stmt.run(name, JSON.stringify(row.levels), JSON.stringify(grades), row.difficulty, row.weeklyHours, JSON.stringify(allowedGrades), unlocked);
+    const subject = db.prepare('SELECT id FROM subjects WHERE name = ?').get(name);
     saveParallelHours(subject.id, parallelHours);
   }));
   autoBindSubjectsToClasses();
@@ -1606,7 +1616,7 @@ function restoreBackup(backup) {
   ];
   runTransaction(() => {
     for (const [table] of tables) db.exec(`DELETE FROM ${table}`);
-    insertRows('subjects', backup.subjects || [], ['id', 'name', 'levels', 'grades', 'difficulty', 'weekly_hours']);
+    insertRows('subjects', (backup.subjects || []).map((row) => ({ ...row, allowed_grades: row.allowed_grades ?? '[]', unlocked: row.unlocked ?? 0 })), ['id', 'name', 'levels', 'grades', 'difficulty', 'weekly_hours', 'allowed_grades', 'unlocked']);
     insertRows('subject_grade_hours', backup.subjectGradeHours || [], ['subject_id', 'grade', 'weekly_hours']);
     insertRows('classes', backup.classes || [], ['id', 'level', 'grade', 'letter', 'shift']);
     insertRows('teachers', backup.teachers || [], ['id', 'full_name', 'subject_name']);

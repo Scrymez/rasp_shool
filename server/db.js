@@ -128,6 +128,8 @@ export function migrate() {
   `);
   ensureColumn('assignments', 'room_id', 'INTEGER');
   ensureColumn('assignments', 'paired', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('subjects', 'allowed_grades', "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn('subjects', 'unlocked', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('classes', 'shift', "TEXT NOT NULL DEFAULT 'morning'");
   ensureColumn('teacher_constraints', 'shift', 'TEXT');
   ensureColumn('schedule_blocks', 'class_id', 'INTEGER');
@@ -136,9 +138,17 @@ export function migrate() {
   ensureColumn('class_advisor_assignments', 'note', "TEXT NOT NULL DEFAULT ''");
   migrateLegacyAdvisors();
   seedSubjects();
+  seedAllowedGrades();
   seedSubjectGradeHours();
   seedSettings();
   pruneInvalidAssignments();
+}
+
+function seedAllowedGrades() {
+  const stmt = db.prepare("UPDATE subjects SET allowed_grades = ? WHERE name = ? AND (allowed_grades IS NULL OR allowed_grades = '[]' OR allowed_grades = '')");
+  runTransaction(() => {
+    for (const item of DEFAULT_SUBJECTS) stmt.run(JSON.stringify(item.grades), item.name);
+  });
 }
 
 export function pruneInvalidAssignments() {
@@ -169,12 +179,12 @@ function migrateLegacyAdvisors() {
 
 function seedSubjects() {
   const stmt = db.prepare(`
-    INSERT INTO subjects (name, levels, grades, difficulty, weekly_hours)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO subjects (name, levels, grades, difficulty, weekly_hours, allowed_grades)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(name) DO NOTHING
   `);
   runTransaction(() => {
-    for (const item of DEFAULT_SUBJECTS) stmt.run(item.name, JSON.stringify(item.levels), JSON.stringify(item.grades), item.difficulty, item.weeklyHours);
+    for (const item of DEFAULT_SUBJECTS) stmt.run(item.name, JSON.stringify(item.levels), JSON.stringify(item.grades), item.difficulty, item.weeklyHours, JSON.stringify(item.grades));
   });
 }
 
@@ -313,6 +323,8 @@ export function allSubjects() {
       name: row.name,
       levels: JSON.parse(row.levels),
       grades: Object.keys(parallelHours).map(Number).sort((a, b) => a - b),
+      allowedGrades: JSON.parse(row.allowed_grades || '[]'),
+      unlocked: Boolean(row.unlocked),
       difficulty: row.difficulty,
       weeklyHours: row.weekly_hours,
       parallelHours

@@ -928,6 +928,65 @@ output {
   overflow-wrap: anywhere;
 }
 
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.filter-bar label {
+  color: var(--gold);
+  font-weight: 600;
+}
+
+.filter-bar select {
+  min-width: 220px;
+  max-width: 100%;
+}
+
+.filter-count {
+  color: var(--muted, #9a93b4);
+  font-size: 13px;
+  margin-left: auto;
+}
+
+.unlock-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(231, 191, 103, 0.28);
+  border-radius: 8px;
+  background: rgba(231, 191, 103, 0.06);
+  cursor: pointer;
+  line-height: 1.35;
+}
+
+.unlock-toggle input {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.grade-flag {
+  color: var(--muted, #9a93b4);
+  font-size: 11px;
+}
+
+.parallel-grid input:disabled,
+.parallel-grid label input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.parallel-grid label:has(input:disabled) {
+  opacity: 0.55;
+}
+
 .assignment-table > span.paired-cell {
   justify-content: center;
 }
