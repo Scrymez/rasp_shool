@@ -188,6 +188,21 @@ app.post('/api/subjects', (req, res) => {
   res.json({ subjects: allSubjects(), assignments: allAssignments() });
 });
 
+app.post('/api/subjects/rename', (req, res) => {
+  const body = z.object({
+    id: z.number().int(),
+    name: z.string().min(2)
+  }).parse(req.body);
+  const newName = body.name.trim();
+  const row = db.prepare('SELECT * FROM subjects WHERE id = ?').get(body.id);
+  if (!row) return res.status(404).json({ error: 'Предмет не найден' });
+  const clash = db.prepare('SELECT id FROM subjects WHERE lower(name) = lower(?) AND id <> ?').get(newName, body.id);
+  if (clash) return res.status(409).json({ error: 'Предмет с таким названием уже есть' });
+  db.prepare('UPDATE subjects SET name = ? WHERE id = ?').run(newName, body.id);
+  audit('rename', 'subject', { id: body.id, oldName: row.name, newName });
+  res.json({ subjects: allSubjects(), assignments: allAssignments() });
+});
+
 app.delete('/api/subjects/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM subjects WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Предмет не найден' });

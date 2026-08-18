@@ -32,7 +32,7 @@ const STEPS = [
 ];
 
 function App() {
-  const [logged, setLogged] = useState(() => Boolean(sessionStorage.getItem(AUTH_TOKEN_KEY)));
+  const [logged, setLogged] = useState(() => Boolean(localStorage.getItem(AUTH_TOKEN_KEY)));
   const [step, setStep] = useState(0);
   const [state, setState] = useState(null);
   const [schedule, setSchedule] = useState(null);
@@ -133,7 +133,7 @@ function App() {
     if (!logged) return;
     refresh().catch((error) => {
       if (error.status === 401) {
-        sessionStorage.removeItem(AUTH_TOKEN_KEY);
+        localStorage.removeItem(AUTH_TOKEN_KEY);
         setLogged(false);
         setState(null);
         setNotice('Сессия истекла. Войдите снова.');
@@ -215,7 +215,7 @@ function App() {
             {hasDraft && <button onClick={loadDraft}><FileDown size={18} /> Загрузить черновик</button>}
             <button onClick={async () => {
               await api('/logout', { method: 'POST' }).catch(() => {});
-              sessionStorage.removeItem(AUTH_TOKEN_KEY);
+              localStorage.removeItem(AUTH_TOKEN_KEY);
               setLogged(false);
               setStep(0);
               setSchedule(null);
@@ -280,13 +280,13 @@ function Login({ setLogged, setStep, setNotice, setState }) {
     event.preventDefault();
     try {
       const result = await api('/login', { method: 'POST', body: { password } });
-      sessionStorage.setItem(AUTH_TOKEN_KEY, result.token);
+      localStorage.setItem(AUTH_TOKEN_KEY, result.token);
       setState(null);
       setLogged(true);
       setNotice(result.mustChangePassword ? 'Вход выполнен. Смените стандартный пароль admin.' : 'Администратор вошел');
       setStep(result.mustChangePassword ? 7 : 0);
     } catch {
-      sessionStorage.removeItem(AUTH_TOKEN_KEY);
+      localStorage.removeItem(AUTH_TOKEN_KEY);
       setLogged(false);
       setNotice('Пароль неверный');
     }
@@ -557,18 +557,35 @@ function Subjects({ state, refresh, setNotice, registerCommit }) {
     setNotice('Предмет удален');
   }
   async function save() {
-    const parallelHours = Object.fromEntries(Object.entries(draft.parallelHours).filter(([, hours]) => Number(hours) > 0).map(([grade, hours]) => [grade, Number(hours)]));
-    const grades = Object.keys(parallelHours).map(Number);
-    await api('/subjects', { method: 'POST', body: { subjects: [{
-      name: draft.name,
-      levels: levelsForGrades(grades),
-      grades,
-      difficulty: Number(draft.difficulty),
-      weeklyHours: Math.max(1, ...Object.values(parallelHours).map(Number), 1),
-      parallelHours
-    }] } });
-    await refresh();
-    setNotice('Настройки предмета сохранены');
+    const trimmedName = draft.name.trim();
+    if (!trimmedName) {
+      setNotice('Введите название предмета');
+      return;
+    }
+    try {
+      if (selected && trimmedName !== selected.name) {
+        await api('/subjects/rename', { method: 'POST', body: { id: selected.id, name: trimmedName } });
+      }
+      const parallelHours = Object.fromEntries(Object.entries(draft.parallelHours).filter(([, hours]) => Number(hours) > 0).map(([grade, hours]) => [grade, Number(hours)]));
+      const grades = Object.keys(parallelHours).map(Number);
+      await api('/subjects', { method: 'POST', body: { subjects: [{
+        name: trimmedName,
+        levels: levelsForGrades(grades),
+        grades,
+        difficulty: Number(draft.difficulty),
+        weeklyHours: Math.max(1, ...Object.values(parallelHours).map(Number), 1),
+        parallelHours
+      }] } });
+      await refresh();
+      setNotice('Настройки предмета сохранены');
+    } catch (error) {
+      setNotice(String(error?.message || '').includes('уже есть') ? 'Предмет с таким названием уже есть' : 'Не удалось сохранить предмет');
+    }
+  }
+  async function selectSubject(id) {
+    if (id === selectedId) return;
+    if (subjectDirty(draft, selected)) await save();
+    setSelectedId(id);
   }
   useEffect(() => {
     registerCommit?.(draft ? save : null);
@@ -596,7 +613,7 @@ function Subjects({ state, refresh, setNotice, registerCommit }) {
         )}
         <div className="subject-list">
           {state.subjects.map((subject) => (
-            <button key={subject.id} className={selected?.id === subject.id ? 'active' : ''} onClick={() => setSelectedId(subject.id)}>
+            <button key={subject.id} className={selected?.id === subject.id ? 'active' : ''} onClick={() => selectSubject(subject.id)}>
               <span>{subject.name}</span>
               <small>
                 <b className={`difficulty-pill difficulty-${subject.difficulty}`}>{subject.difficulty}/5 · {difficultyLabel(subject.difficulty)}</b>
@@ -1664,6 +1681,16 @@ function uniqueTeachersByName(teachers) {
   return [...map.values()].sort((a, b) => a.fullName.localeCompare(b.fullName, 'ru'));
 }
 
+function subjectDirty(draft, selected) {
+  if (!draft || !selected) return false;
+  if (draft.name.trim() !== selected.name) return true;
+  if (Number(draft.difficulty) !== Number(selected.difficulty)) return true;
+  const norm = (source) => JSON.stringify(
+    Object.entries(source || {}).map(([grade, hours]) => [Number(grade), Number(hours)]).filter(([, hours]) => hours > 0).sort((a, b) => a[0] - b[0])
+  );
+  return norm(draft.parallelHours) !== norm(selected.parallelHours);
+}
+
 function parseSubjectText(value) {
   return [...new Set(String(value || '').split(/[,;]+/).map((item) => item.trim()).filter(Boolean))];
 }
@@ -1799,7 +1826,7 @@ function readFile(file) {
 }
 
 async function api(path, options = {}) {
-  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
   const response = await fetch(`${API}${path}`, {
     method: options.method || 'GET',
     headers: {
@@ -1817,7 +1844,7 @@ async function api(path, options = {}) {
 }
 
 async function apiText(path) {
-  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
   const response = await fetch(`${API}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   });
@@ -1830,7 +1857,7 @@ async function apiText(path) {
 }
 
 async function downloadFile(path) {
-  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
   const response = await fetch(`${API}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   });
@@ -1852,7 +1879,7 @@ async function downloadFile(path) {
 }
 
 async function openProtectedFile(path) {
-  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
   const response = await fetch(`${API}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   });
