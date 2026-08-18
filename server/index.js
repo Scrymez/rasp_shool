@@ -9,7 +9,7 @@ import { z } from 'zod';
 import {
   allAssignments, allClasses, allRooms, allScheduleBlocks, allSubjects, allTeacherConstraints,
   allTeachers, allAuditLog, allClassAdvisors, audit, db, ensureAdminPasswordHash,
-  json, migrate, runTransaction, setAdminPassword, verifyAdminPassword
+  json, migrate, pruneInvalidAssignments, runTransaction, setAdminPassword, verifyAdminPassword
 } from './db.js';
 import { generateSchedule } from './scheduler.js';
 
@@ -775,6 +775,7 @@ function autoBindSubjectsToClasses() {
         }
       }
     }
+    pruneInvalidAssignments();
   });
 }
 

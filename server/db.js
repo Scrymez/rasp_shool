@@ -138,6 +138,19 @@ export function migrate() {
   seedSubjects();
   seedSubjectGradeHours();
   seedSettings();
+  pruneInvalidAssignments();
+}
+
+export function pruneInvalidAssignments() {
+  return db.prepare(`
+    DELETE FROM assignments
+    WHERE id IN (
+      SELECT a.id FROM assignments a
+      JOIN classes c ON c.id = a.class_id
+      LEFT JOIN subject_grade_hours sgh ON sgh.subject_id = a.subject_id AND sgh.grade = c.grade
+      WHERE sgh.subject_id IS NULL
+    )
+  `).run().changes;
 }
 
 function ensureColumn(table, column, definition) {
