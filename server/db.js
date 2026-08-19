@@ -107,6 +107,16 @@ export function migrate() {
       reason TEXT NOT NULL DEFAULT '',
       FOREIGN KEY(class_id) REFERENCES classes(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS teacher_availability (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      teacher_id INTEGER NOT NULL,
+      day_id TEXT NOT NULL,
+      day_off INTEGER NOT NULL DEFAULT 0,
+      from_period INTEGER,
+      to_period INTEGER,
+      UNIQUE(teacher_id, day_id),
+      FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -377,6 +387,21 @@ export function allTeacherConstraints() {
     JOIN teachers t ON t.id = tc.teacher_id
     ORDER BY t.full_name, tc.day_id, tc.period_number
   `).all();
+}
+
+export function allTeacherAvailability() {
+  return db.prepare(`
+    SELECT id, teacher_id AS teacherId, day_id AS dayId, day_off AS dayOff,
+           from_period AS fromPeriod, to_period AS toPeriod
+    FROM teacher_availability
+  `).all().map((row) => ({
+    id: row.id,
+    teacherId: row.teacherId,
+    dayId: row.dayId,
+    dayOff: Boolean(row.dayOff),
+    fromPeriod: row.fromPeriod == null ? null : Number(row.fromPeriod),
+    toPeriod: row.toPeriod == null ? null : Number(row.toPeriod)
+  }));
 }
 
 export function allScheduleBlocks() {

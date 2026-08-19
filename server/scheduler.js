@@ -146,6 +146,7 @@ function violatesHardRules({ grid, day, period, lesson, busy, settings, schoolCl
   if (dayDifficulty(grid, day.id) + lesson.difficulty > maxDailyDifficulty(settings, schoolClass.grade)) return true;
   if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return true;
   if (isTeacherUnavailable(settings, lesson.teacherId, day.id, period.number, shift)) return true;
+  if (isOutsideAvailability(settings, lesson.teacherId, day.id, period.number)) return true;
   if (lesson.teacherId && resourceBusy(busy.teachers, settings, variant, shift, lesson.teacherId, day.id, period)) return true;
   if (lesson.roomId && resourceBusy(busy.rooms, settings, variant, shift, lesson.roomId, day.id, period)) return true;
   return false;
@@ -369,6 +370,16 @@ function isTeacherUnavailable(settings, teacherId, dayId, periodNumber, shift) {
     (!item.shift || item.shift === shift) &&
     (item.periodNumber == null || item.periodNumber === periodNumber)
   ));
+}
+
+function isOutsideAvailability(settings, teacherId, dayId, periodNumber) {
+  if (!teacherId) return false;
+  const window = (settings.teacherAvailability || []).find((item) => item.teacherId === teacherId && item.dayId === dayId);
+  if (!window) return false;
+  if (window.dayOff) return true;
+  if (window.fromPeriod != null && periodNumber < window.fromPeriod) return true;
+  if (window.toPeriod != null && periodNumber > window.toPeriod) return true;
+  return false;
 }
 
 function isScheduleBlocked(settings, dayId, periodNumber, shift, classId) {

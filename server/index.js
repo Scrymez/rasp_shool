@@ -8,7 +8,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { z } from 'zod';
 import {
   allAssignments, allClasses, allRooms, allScheduleBlocks, allSubjects, allTeacherConstraints,
-  allTeachers, allAuditLog, allClassAdvisors, audit, db, ensureAdminPasswordHash,
+  allTeacherAvailability, allTeachers, allAuditLog, allClassAdvisors, audit, db, ensureAdminPasswordHash,
   json, migrate, pruneInvalidAssignments, runTransaction, setAdminPassword, verifyAdminPassword
 } from './db.js';
 import { generateSchedule } from './scheduler.js';
@@ -80,6 +80,7 @@ app.get('/api/bootstrap', (_req, res) => {
     rooms: allRooms(),
     classAdvisors: allClassAdvisors(),
     teacherConstraints: allTeacherConstraints(),
+    teacherAvailability: allTeacherAvailability(),
     scheduleBlocks: allScheduleBlocks(),
     auditLog: allAuditLog(),
     assignments: allAssignments(),
@@ -479,6 +480,27 @@ app.post('/api/teacher-constraints', (req, res) => {
   res.json({ teacherConstraints: allTeacherConstraints() });
 });
 
+app.post('/api/teacher-availability', (req, res) => {
+  const rows = z.array(z.object({
+    teacherId: z.number().int(),
+    dayId: z.string().min(1),
+    dayOff: z.union([z.boolean(), z.number()]).optional(),
+    fromPeriod: z.number().int().min(1).nullable().optional(),
+    toPeriod: z.number().int().min(1).nullable().optional()
+  })).parse(req.body.availability || []);
+  db.exec('DELETE FROM teacher_availability');
+  const stmt = db.prepare('INSERT OR REPLACE INTO teacher_availability (teacher_id, day_id, day_off, from_period, to_period) VALUES (?, ?, ?, ?, ?)');
+  runTransaction(() => rows.forEach((row) => {
+    const dayOff = row.dayOff ? 1 : 0;
+    const from = dayOff ? null : (row.fromPeriod ?? null);
+    const to = dayOff ? null : (row.toPeriod ?? null);
+    if (!dayOff && from == null && to == null) return; // no restriction, skip
+    stmt.run(row.teacherId, row.dayId, dayOff, from, to);
+  }));
+  audit('replace', 'teacher-availability', { count: rows.length });
+  res.json({ teacherAvailability: allTeacherAvailability() });
+});
+
 app.post('/api/schedule-blocks', (req, res) => {
   const rows = z.array(z.object({
     dayId: z.string().min(1),
@@ -538,6 +560,7 @@ app.post('/api/generate', (req, res) => {
       shifts: json.get('shifts'),
       sanpin: json.get('sanpin'),
       teacherConstraints: allTeacherConstraints(),
+      teacherAvailability: allTeacherAvailability(),
       scheduleBlocks: allScheduleBlocks()
     },
     classIds: body.classIds,
@@ -711,6 +734,7 @@ app.get('/api/backup.json', (_req, res) => {
     classAdvisorAssignments: db.prepare('SELECT * FROM class_advisor_assignments').all(),
     assignments: db.prepare('SELECT * FROM assignments').all(),
     teacherConstraints: db.prepare('SELECT * FROM teacher_constraints').all(),
+    teacherAvailability: db.prepare('SELECT * FROM teacher_availability').all(),
     scheduleBlocks: db.prepare('SELECT * FROM schedule_blocks').all(),
     settings: db.prepare('SELECT * FROM settings').all(),
     schedules: db.prepare('SELECT * FROM schedules').all()
@@ -1603,6 +1627,7 @@ function restoreBackup(backup) {
   const tables = [
     ['schedules', backup.schedules],
     ['schedule_blocks', backup.scheduleBlocks],
+    ['teacher_availability', backup.teacherAvailability],
     ['teacher_constraints', backup.teacherConstraints],
     ['assignments', backup.assignments],
     ['class_advisor_assignments', backup.classAdvisorAssignments],
@@ -1625,6 +1650,7 @@ function restoreBackup(backup) {
     insertRows('class_advisor_assignments', backup.classAdvisorAssignments || [], ['id', 'class_id', 'teacher_id', 'room_id', 'shift', 'note']);
     insertRows('assignments', backup.assignments || [], ['id', 'class_id', 'subject_id', 'teacher_id', 'room_id', 'weekly_hours', 'paired']);
     insertRows('teacher_constraints', backup.teacherConstraints || [], ['id', 'teacher_id', 'day_id', 'shift', 'period_number', 'kind']);
+    insertRows('teacher_availability', backup.teacherAvailability || [], ['id', 'teacher_id', 'day_id', 'day_off', 'from_period', 'to_period']);
     insertRows('schedule_blocks', backup.scheduleBlocks || [], ['id', 'day_id', 'shift', 'class_id', 'period_number', 'reason']);
     insertRows('settings', backup.settings || [], ['key', 'value']);
     insertRows('schedules', backup.schedules || [], ['id', 'title', 'week_mode', 'created_at', 'payload']);
