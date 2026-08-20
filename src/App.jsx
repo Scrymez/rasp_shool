@@ -58,6 +58,11 @@ function App() {
   }
   const registerCommit = (fn) => { editorCommit.current = fn; };
 
+  function goStep(next) {
+    flushEditor();
+    setStep(next);
+  }
+
   async function refresh() {
     const data = await api('/bootstrap');
     setState(data);
@@ -180,7 +185,7 @@ function App() {
         </div>
         <nav>
           {STEPS.map(([label, Icon], index) => (
-            <button className={step === index ? 'active' : ''} key={label} onClick={() => setStep(index)}>
+            <button className={step === index ? 'active' : ''} key={label} onClick={() => goStep(index)}>
               <Icon size={18} />
               <span>{label}</span>
               {index < step && <Check size={15} />}
@@ -264,7 +269,7 @@ function App() {
         <div className="bottom-actions">
           <button className="draft-button" onClick={saveDraft}><Save size={18} /> Сохранить черновик</button>
           {step < STEPS.length - 1 && (
-            <button className="primary" onClick={() => setStep(step + 1)}>
+            <button className="primary" onClick={() => goStep(step + 1)}>
               Далее <ChevronRight size={18} />
             </button>
           )}
@@ -1006,9 +1011,22 @@ function Assignments({ state, refresh, setNotice, registerCommit }) {
     return map;
   }, [state.teachers]);
   async function save() {
-    await api('/assignments', { method: 'POST', body: { assignments: rows } });
-    await refresh();
-    setNotice('Связки учитель-класс-предмет сохранены');
+    const payload = rows.map((row) => ({
+      classId: Number(row.classId),
+      subjectId: Number(row.subjectId),
+      teacherId: row.teacherId ? Number(row.teacherId) : null,
+      roomId: row.roomId ? Number(row.roomId) : null,
+      weeklyHours: Math.min(10, Math.max(1, Number(row.weeklyHours) || 1)),
+      paired: row.paired ? 1 : 0
+    }));
+    try {
+      await api('/assignments', { method: 'POST', body: { assignments: payload } });
+      await refresh();
+      setNotice('Связки учитель-класс-предмет сохранены');
+    } catch (error) {
+      setNotice(`Не удалось сохранить связки: ${error.message || 'ошибка'}`);
+      throw error;
+    }
   }
   useEffect(() => {
     registerCommit?.(rows.length ? save : null);
