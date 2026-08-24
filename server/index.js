@@ -523,7 +523,7 @@ app.post('/api/assignments', (req, res) => {
     subjectId: z.number(),
     teacherId: z.number().nullable().optional(),
     roomId: z.number().nullable().optional(),
-    weeklyHours: z.number().min(1).max(10),
+    weeklyHours: z.number().min(0.5).max(10),
     paired: z.union([z.boolean(), z.number()]).optional()
   })).parse(req.body.assignments || []);
   const stmt = db.prepare(`

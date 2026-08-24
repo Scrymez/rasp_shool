@@ -668,7 +668,7 @@ function Subjects({ state, refresh, setNotice, registerCommit }) {
                 return (
                   <React.Fragment key={grade}>
                     <span>{grade}{restricted && <small className="grade-flag">{locked ? ' 🔒' : ' вне ФГОС'}</small>}</span>
-                    <input type="number" min="0" max="12" value={locked ? 0 : hours} disabled={locked} onChange={(e) => setDraft({ ...draft, parallelHours: { ...draft.parallelHours, [grade]: Number(e.target.value) } })} />
+                    <input type="number" min="0" max="12" step="0.5" value={locked ? 0 : hours} disabled={locked} onChange={(e) => setDraft({ ...draft, parallelHours: { ...draft.parallelHours, [grade]: Number(e.target.value) } })} />
                     <label>
                       <input type="checkbox" disabled={locked} checked={hours > 0} onChange={(e) => setDraft({ ...draft, parallelHours: { ...draft.parallelHours, [grade]: e.target.checked ? Math.max(1, hours || 1) : 0 } })} />
                       {locked ? 'заблокировано' : hours > 0 ? 'активна' : 'нет'}
@@ -1061,7 +1061,7 @@ function Assignments({ state, refresh, setNotice, registerCommit }) {
                 <option value="">Любой</option>
                 {state.rooms.map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}
               </select>
-              <input type="number" min="1" max="10" value={row.weeklyHours} onChange={(e) => updateRows(rows, setRows, index, 'weeklyHours', Number(e.target.value))} />
+              <input type="number" min="0.5" max="10" step="0.5" value={row.weeklyHours} onChange={(e) => updateRows(rows, setRows, index, 'weeklyHours', Number(e.target.value))} />
               <span className="paired-cell">
                 <input type="checkbox" checked={!!row.paired} onChange={(e) => updateRows(rows, setRows, index, 'paired', e.target.checked)} title="Ставить уроки этого предмета подряд в один день" />
               </span>

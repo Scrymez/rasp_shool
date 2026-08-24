@@ -44,8 +44,8 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
     payload.classes[key] = {};
     for (const variant of variants) payload.classes[key][variant] = emptyGrid(days, periods);
 
-    const classLessons = lessonsForClass(assignments, schoolClass.id, strategy);
     for (const variant of variants) {
+      const classLessons = lessonsForClass(assignments, schoolClass.id, strategy, variant, weekMode);
       for (const lesson of classLessons) {
         const slot = bestSlot({
           grid: payload.classes[key][variant],
@@ -94,10 +94,10 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
   return payload;
 }
 
-function lessonsForClass(assignments, classId, strategy) {
+function lessonsForClass(assignments, classId, strategy, variant = 'single', weekMode = 'one') {
   return assignments
     .filter((item) => item.classId === classId)
-    .flatMap((item) => expandAssignment(item))
+    .flatMap((item) => expandAssignment(item, variant, weekMode))
     .sort((a, b) => {
       const constraintDelta = lessonConstraintWeight(b) - lessonConstraintWeight(a);
       if (constraintDelta !== 0) return constraintDelta;
@@ -107,8 +107,24 @@ function lessonsForClass(assignments, classId, strategy) {
     });
 }
 
-function expandAssignment(item) {
-  return Array.from({ length: Math.max(1, item.weeklyHours) }, (_, index) => ({ ...item, copy: index }));
+function lessonCountForVariant(weeklyHours, variant, weekMode) {
+  const hours = Number(weeklyHours) || 0;
+  if (hours <= 0) return 0;
+  const whole = Math.floor(hours);
+  const frac = hours - whole;
+  let count = whole;
+  if (frac >= 0.5) {
+    // half-hour = one lesson every two weeks: in two-week mode only the odd week gets it;
+    // in a single-week schedule it becomes one lesson that week.
+    if (weekMode === 'two') { if (variant === 'odd') count += 1; }
+    else count += 1;
+  }
+  return count;
+}
+
+function expandAssignment(item, variant = 'single', weekMode = 'one') {
+  const count = lessonCountForVariant(item.weeklyHours, variant, weekMode);
+  return Array.from({ length: count }, (_, index) => ({ ...item, copy: index }));
 }
 
 function lessonConstraintWeight(lesson) {
