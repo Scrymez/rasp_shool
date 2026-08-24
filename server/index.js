@@ -694,6 +694,59 @@ app.get('/api/print/schedules/:id.html', (req, res) => {
   res.send(printHtml(JSON.parse(row.payload)));
 });
 
+app.get('/api/export/schedules/:id.log.txt', (req, res) => {
+  const row = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).send('Расписание не найдено');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  setDownloadName(res, `Журнал-логов-расписание-${row.id}.txt`);
+  res.send(scheduleLogText(row));
+});
+
+function scheduleLogText(row) {
+  const p = JSON.parse(row.payload);
+  const L = [];
+  L.push('ЖУРНАЛ ГЕНЕРАЦИИ РАСПИСАНИЯ');
+  L.push('='.repeat(50));
+  L.push(`Расписание #${row.id}: ${row.title}`);
+  L.push(`Создано: ${new Date(row.created_at).toLocaleString('ru-RU')}`);
+  L.push(`Режим недели: ${p.weekMode === 'two' ? 'четная и нечетная' : 'одна неделя'}`);
+  L.push(`Стратегия генератора: ${p.quality?.strategy || '-'} · оценка ${p.quality?.score ?? '-'}`);
+  L.push(`Классов в расписании: ${Object.keys(p.classes || {}).length}`);
+  L.push('');
+
+  const diags = p.diagnostics || [];
+  L.push(`ПРЕДУПРЕЖДЕНИЯ И ОШИБКИ: ${diags.length}`);
+  L.push('-'.repeat(50));
+  if (!diags.length) {
+    L.push('Ошибок нет — все уроки расставлены.');
+  } else {
+    const byClass = {};
+    for (const d of diags) {
+      const key = d.className || 'общее';
+      (byClass[key] ||= []).push(d);
+    }
+    for (const [cls, items] of Object.entries(byClass).sort()) {
+      L.push(`Класс ${cls}: не удалось поставить ${items.length}`);
+      for (const d of items) L.push(`   • ${d.week && d.week !== 'single' ? `[${weekLabel(d.week)}] ` : ''}${d.message}`);
+    }
+  }
+
+  if (p.manualWarnings?.length) {
+    L.push('');
+    L.push('КОНФЛИКТЫ ПОСЛЕ РУЧНЫХ ПРАВОК:');
+    L.push('-'.repeat(50));
+    for (const m of p.manualWarnings) L.push(`   • ${m}`);
+  }
+
+  L.push('');
+  L.push('КАЧЕСТВО:');
+  L.push('-'.repeat(50));
+  L.push(`Окна у классов: ${p.quality?.classWindows ?? '-'}`);
+  L.push(`Сложные уроки на 5+ уроке: ${p.quality?.lateHardLessons ?? '-'}`);
+  L.push(`Дисбаланс сложности: ${p.quality?.difficultyImbalance ?? '-'}`);
+  return L.join('\n');
+}
+
 app.get('/api/reports', (_req, res) => {
   const row = db.prepare('SELECT id, title, week_mode AS weekMode, created_at AS createdAt, payload FROM schedules ORDER BY id DESC LIMIT 1').get();
   const latest = row ? { ...row, payload: JSON.parse(row.payload) } : null;

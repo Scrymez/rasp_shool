@@ -4,6 +4,7 @@ export const DEFAULT_SUBJECTS = [
   { name: 'Литература', levels: ['ООО', 'СОО'], grades: [5,6,7,8,9,10,11], difficulty: 4, weeklyHours: 3 },
   { name: 'Родной язык', levels: ['НОО', 'ООО'], grades: [1,2,3,4,5,6,7,8,9], difficulty: 3, weeklyHours: 1 },
   { name: 'Родная литература', levels: ['ООО'], grades: [5,6,7,8,9], difficulty: 3, weeklyHours: 1 },
+  { name: 'Родной язык / родная литература', levels: ['НОО', 'ООО'], grades: [], allowed: [1,2,3,4,5,6,7,8,9], difficulty: 3, weeklyHours: 1 },
   { name: 'Иностранный язык', levels: ['НОО', 'ООО', 'СОО'], grades: [2,3,4,5,6,7,8,9,10,11], difficulty: 4, weeklyHours: 3 },
   { name: 'Второй иностранный язык', levels: ['ООО'], grades: [5,6,7,8,9], difficulty: 3, weeklyHours: 1 },
   { name: 'Математика', levels: ['НОО', 'ООО'], grades: [1,2,3,4,5,6], difficulty: 5, weeklyHours: 5 },

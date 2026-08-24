@@ -1530,7 +1530,11 @@ function Generate({ state, selectedClasses, setSelectedClasses, weekMode, setWee
           <button className="export-link primary-export" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.grid.xlsx`)}><FileSpreadsheet size={18} /> Скачать все расписание</button>
           <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.pdf`)}><FileDown size={18} /> Экспорт в PDF</button>
           <button className="export-link" onClick={() => openProtectedFile(`/print/schedules/${schedule.id}.html`)}><Printer size={18} /> Печатная форма</button>
+          <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.log.txt`)}><FileDown size={18} /> Журнал логов (ошибки)</button>
         </div>
+      )}
+      {schedule?.diagnostics?.length > 0 && (
+        <p className="hint">⚠ Генератор не смог поставить {schedule.diagnostics.length} уроков — скачайте «Журнал логов» для деталей.</p>
       )}
     </section>
   );

@@ -150,7 +150,7 @@ function bestSlot({ grid, days, periods, lesson, busy, settings, schoolClass, sh
       candidates.push({
         day,
         period,
-        score: slotScore({ grid, days, day, period, lesson, settings, schoolClass, strategy })
+        score: slotScore({ grid, days, day, period, periods, lesson, settings, schoolClass, shift, strategy })
       });
     }
   }
@@ -168,7 +168,7 @@ function violatesHardRules({ grid, day, period, lesson, busy, settings, schoolCl
   return false;
 }
 
-function slotScore({ grid, days, day, period, lesson, settings, schoolClass, strategy }) {
+function slotScore({ grid, days, day, period, periods, lesson, settings, schoolClass, shift, strategy }) {
   const beforeLoad = dayLoad(grid, day.id);
   const projectedGrid = cloneGrid(grid);
   projectedGrid[day.id][period.number] = { subject: lesson.subjectName, difficulty: lesson.difficulty };
@@ -183,10 +183,24 @@ function slotScore({ grid, days, day, period, lesson, settings, schoolClass, str
   const pairPenalty = pairAdjacencyPenalty(lesson, sameSubjectPeriodsToday, period.number);
   const periodPenalty = preferredPeriodPenalty(period.number, lesson.difficulty);
   const gapPenalty = classWindowCount(projectedGrid) * (strategy.name === 'compact' ? 32 : 20);
+  const leadingGapPenalty = leadingEmptyBefore(grid, periods, day.id, period.number, settings, shift, schoolClass) * 26;
   const lateHardPenalty = lesson.difficulty >= 4 && period.number >= 5 ? 34 : 0;
-  const firstLessonEasyPenalty = lesson.difficulty <= 2 && period.number === 1 ? 16 : 0;
+  const firstLessonEasyPenalty = lesson.difficulty <= 2 && period.number === 1 ? 8 : 0;
   const overloadRisk = dayDifficulty(projectedGrid, day.id) / maxDailyDifficulty(settings, schoolClass.grade);
-  return loadPenalty + difficultyPenalty + repeatPenalty + spreadPenalty + pairPenalty + periodPenalty + gapPenalty + lateHardPenalty + firstLessonEasyPenalty + overloadRisk;
+  return loadPenalty + difficultyPenalty + repeatPenalty + spreadPenalty + pairPenalty + periodPenalty + gapPenalty + leadingGapPenalty + lateHardPenalty + firstLessonEasyPenalty + overloadRisk;
+}
+
+// Count empty, non-blocked periods before `periodNumber` on this day for the class.
+// School blocks (e.g. Разговоры о важном) don't count — the day may legitimately start later there.
+function leadingEmptyBefore(grid, periods, dayId, periodNumber, settings, shift, schoolClass) {
+  let gaps = 0;
+  for (const p of periods) {
+    if (p.number >= periodNumber) break;
+    if (grid[dayId]?.[p.number]) continue;
+    if (isScheduleBlocked(settings, dayId, p.number, shift, schoolClass.id)) continue;
+    gaps += 1;
+  }
+  return gaps;
 }
 
 function pairAdjacencyPenalty(lesson, sameSubjectPeriodsToday, periodNumber) {

@@ -157,7 +157,7 @@ export function migrate() {
 function seedAllowedGrades() {
   const stmt = db.prepare("UPDATE subjects SET allowed_grades = ? WHERE name = ? AND (allowed_grades IS NULL OR allowed_grades = '[]' OR allowed_grades = '')");
   runTransaction(() => {
-    for (const item of DEFAULT_SUBJECTS) stmt.run(JSON.stringify(item.grades), item.name);
+    for (const item of DEFAULT_SUBJECTS) stmt.run(JSON.stringify(item.allowed || item.grades), item.name);
   });
 }
 
@@ -194,7 +194,7 @@ function seedSubjects() {
     ON CONFLICT(name) DO NOTHING
   `);
   runTransaction(() => {
-    for (const item of DEFAULT_SUBJECTS) stmt.run(item.name, JSON.stringify(item.levels), JSON.stringify(item.grades), item.difficulty, item.weeklyHours, JSON.stringify(item.grades));
+    for (const item of DEFAULT_SUBJECTS) stmt.run(item.name, JSON.stringify(item.levels), JSON.stringify(item.grades), item.difficulty, item.weeklyHours, JSON.stringify(item.allowed || item.grades));
   });
 }
 
