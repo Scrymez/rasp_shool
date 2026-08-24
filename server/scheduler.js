@@ -8,11 +8,34 @@ const ATTEMPTS = [
 
 export function generateSchedule({ classes, assignments, settings, classIds, weekMode }) {
   const days = settings.days.filter((day) => day.enabled);
-  const periods = settings.periods;
+  const maxCount = maxPeriodCount(settings);
+  const periods = Array.from({ length: maxCount }, (_, i) => ({ number: i + 1 }));
   const selected = classes.filter((item) => classIds.includes(item.id));
   const variants = weekMode === 'two' ? ['odd', 'even'] : ['single'];
   const attempts = ATTEMPTS.map((strategy) => buildSchedule({ selected, assignments, settings, days, periods, variants, weekMode, strategy }));
   return attempts.sort((a, b) => scheduleScore(a) - scheduleScore(b))[0];
+}
+
+// Each (education level, shift) has its own bell schedule (start + per-lesson duration/break).
+function timetableFor(settings, level, shift) {
+  const t = settings.timetables?.[level]?.[shift];
+  if (t && Array.isArray(t.periods) && t.periods.length) return t;
+  const start = settings.levelStarts?.[level]?.[shift]
+    || (settings.shifts || []).find((s) => s.id === shift)?.startsAt
+    || (shift === 'afternoon' ? '14:00' : '08:30');
+  return { start, periods: settings.periods || [] };
+}
+
+function maxPeriodCount(settings) {
+  let max = 0;
+  const timetables = settings.timetables || {};
+  for (const level of Object.keys(timetables)) {
+    for (const shift of Object.keys(timetables[level] || {})) {
+      max = Math.max(max, (timetables[level][shift]?.periods || []).length);
+    }
+  }
+  if (!max) max = (settings.periods || []).length || 7;
+  return max;
 }
 
 function buildSchedule({ selected, assignments, settings, days, periods, variants, weekMode, strategy }) {
@@ -24,6 +47,7 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
     periods,
     shifts: settings.shifts || [],
     levelStarts: settings.levelStarts || {},
+    timetables: settings.timetables || {},
     classMeta: {},
     classes: {},
     diagnostics: [],
@@ -41,6 +65,7 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
   for (const schoolClass of classOrder) {
     const key = classKey(schoolClass);
     const shift = schoolClass.shift || 'morning';
+    const classPeriods = timetableFor(settings, schoolClass.level, shift).periods;
     payload.classMeta[key] = { shift, level: schoolClass.level };
     payload.classes[key] = {};
     for (const variant of variants) payload.classes[key][variant] = emptyGrid(days, periods);
@@ -51,7 +76,7 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
         const slot = bestSlot({
           grid: payload.classes[key][variant],
           days,
-          periods,
+          periods: classPeriods,
           lesson,
           busy,
           settings,
@@ -240,19 +265,13 @@ function resourceBusyKey(variant, resourceId, dayId) {
   return `${variant}:${resourceId}:${dayId}`;
 }
 
-function dayStartMinutes(settings, level, shiftId) {
-  const start = settings.levelStarts?.[level]?.[shiftId]
-    || (settings.shifts || []).find((item) => item.id === shiftId)?.startsAt
-    || (shiftId === 'afternoon' ? '14:00' : '08:30');
-  return timeToMinutes(start);
-}
-
 function periodInterval(settings, level, shiftId, periodNumber) {
-  let cursor = dayStartMinutes(settings, level, shiftId);
-  for (const period of [...settings.periods].sort((a, b) => Number(a.number) - Number(b.number))) {
+  const tt = timetableFor(settings, level, shiftId);
+  let cursor = timeToMinutes(tt.start);
+  for (const period of [...tt.periods].sort((a, b) => Number(a.number) - Number(b.number))) {
     const start = cursor;
     const end = start + Number(period.duration || 40);
-    if (period.number === periodNumber) return { start, end };
+    if (Number(period.number) === Number(periodNumber)) return { start, end };
     cursor = end + Number(period.breakAfter || 0);
   }
   return { start: cursor, end: cursor + 40 };

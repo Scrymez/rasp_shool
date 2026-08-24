@@ -1254,55 +1254,46 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
 
 function TimeSettings({ state, refresh, setNotice, registerCommit }) {
   const [days, setDays] = useState(state.settings.days);
-  const [periods, setPeriods] = useState(() => normalizePeriodsForEditor(state.settings.periods, state.settings.shifts));
-  const [shifts, setShifts] = useState(state.settings.shifts || SHIFTS.map((shift) => ({ ...shift, startsAt: shift.id === 'morning' ? '08:30' : '14:00' })));
-  const [levelStarts, setLevelStarts] = useState(() => ({
-    'НОО': { morning: '08:00', afternoon: '12:20' },
-    'ООО': { morning: '08:30', afternoon: '13:10' },
-    'СОО': { morning: '08:30', afternoon: '13:10' },
-    ...(state.settings.levelStarts || {})
-  }));
+  const [timetables, setTimetables] = useState(() => normalizeTimetables(state.settings));
   const [sanpin, setSanpin] = useState(state.settings.sanpin);
+  const [level, setLevel] = useState('НОО');
+  const [shift, setShift] = useState('morning');
+  const current = timetables[level]?.[shift] || { start: '08:00', periods: [] };
 
   async function save() {
-    await api('/settings', { method: 'POST', body: { days, periods: normalizePeriodsForSave(periods), shifts, levelStarts, sanpin } });
+    const representative = timetables['НОО']?.morning?.periods || [];
+    const levelStarts = Object.fromEntries(LEVELS.map((lv) => [lv, { morning: timetables[lv]?.morning?.start, afternoon: timetables[lv]?.afternoon?.start }]));
+    await api('/settings', { method: 'POST', body: { days, timetables, periods: representative, levelStarts, sanpin } });
     await refresh();
-    setNotice('Время смен и звонки настроены');
+    setNotice('Расписание звонков сохранено');
   }
 
   useEffect(() => {
     registerCommit?.(save);
     return () => registerCommit?.(null);
-  }, [days, periods, shifts, levelStarts, sanpin]);
+  }, [days, timetables, sanpin]);
 
-  function setLevelStart(level, shiftId, value) {
-    setLevelStarts({ ...levelStarts, [level]: { ...(levelStarts[level] || {}), [shiftId]: value } });
+  function patchCurrent(nextPeriods, nextStart) {
+    setTimetables({
+      ...timetables,
+      [level]: {
+        ...timetables[level],
+        [shift]: {
+          start: nextStart != null ? nextStart : current.start,
+          periods: nextPeriods != null ? nextPeriods : current.periods
+        }
+      }
+    });
   }
-
-  function updatePeriod(index, key, value) {
-    setPeriods(periods.map((period, periodIndex) => periodIndex === index ? { ...period, [key]: value } : period));
+  function updateRow(index, key, value) {
+    patchCurrent(current.periods.map((p, i) => i === index ? { ...p, [key]: value } : p));
   }
-
-  function updatePeriodStart(index, shiftId, value) {
-    setPeriods(periods.map((period, periodIndex) => periodIndex === index ? {
-      ...period,
-      startsAt: { ...(period.startsAt || {}), [shiftId]: value }
-    } : period));
+  function addRow() {
+    const nextNumber = Math.max(0, ...current.periods.map((p) => Number(p.number) || 0)) + 1;
+    patchCurrent([...current.periods, { number: nextNumber, duration: 40, breakAfter: 10 }]);
   }
-
-  function addPeriod() {
-    const nextNumber = Math.max(0, ...periods.map((period) => Number(period.number) || 0)) + 1;
-    setPeriods([...periods, {
-      number: nextNumber,
-      duration: 40,
-      breakAfter: 10,
-      startsAt: Object.fromEntries(shiftOptions({ settings: { shifts } }).map((shift) => [shift.id, nextPeriodStart(periods, shifts, shift.id)]))
-    }]);
-  }
-
-  function removePeriod(index) {
-    const next = periods.filter((_, periodIndex) => periodIndex !== index).map((period, periodIndex) => ({ ...period, number: periodIndex + 1 }));
-    setPeriods(next);
+  function removeRow(index) {
+    patchCurrent(current.periods.filter((_, i) => i !== index).map((p, i) => ({ ...p, number: i + 1 })));
   }
 
   return (
@@ -1318,41 +1309,37 @@ function TimeSettings({ state, refresh, setNotice, registerCommit }) {
           ))}
         </div>
       </div>
-      <div className="panel">
-        <PanelTitle icon={CalendarDays} title="Старт смен по уровням" />
-        <p className="hint">У каждого уровня образования своё время начала 1 и 2 смены. Пример: у НОО 2 смена с 12:20, у ООО — с 13:10. Звонки уроков считаются от старта смены с учётом длительностей и перемен.</p>
-        <div className="level-starts-grid">
-          <b>Уровень</b><b>1 смена</b><b>2 смена</b>
-          {LEVELS.map((level) => (
-            <React.Fragment key={level}>
-              <span>{level}</span>
-              <input type="time" value={levelStarts[level]?.morning || ''} onChange={(e) => setLevelStart(level, 'morning', e.target.value)} />
-              <input type="time" value={levelStarts[level]?.afternoon || ''} onChange={(e) => setLevelStart(level, 'afternoon', e.target.value)} />
-            </React.Fragment>
-          ))}
-        </div>
-      </div>
       <div className="panel full-span">
-        <PanelTitle icon={MoonStar} title="Уроки и перемены (звонки)" />
-        <p className="hint">Длительность урока и перемены после него — общие для всех. Время звонков считается отдельно для каждого уровня и смены (колонки справа — для примера).</p>
-        <div className="period-editor-grid">
-          <b>Урок</b><b>Длит., мин</b><b>Перемена, мин</b><b>НОО · 1см</b><b>НОО · 2см</b><b>ООО · 1см</b><b>ООО · 2см</b><b></b>
-          {periods.map((period, index) => (
-            <React.Fragment key={`${period.number}-${index}`}>
-              <input type="number" min="1" max="14" value={period.number} onChange={(e) => updatePeriod(index, 'number', Number(e.target.value))} />
-              <input type="number" min="20" max="90" value={period.duration} onChange={(e) => updatePeriod(index, 'duration', Number(e.target.value))} />
-              <input type="number" min="0" max="60" value={period.breakAfter} onChange={(e) => updatePeriod(index, 'breakAfter', Number(e.target.value))} />
-              <span className="time-hint">{periodTime({ periods, shifts, levelStarts }, 'НОО', 'morning', period.number)}</span>
-              <span className="time-hint">{periodTime({ periods, shifts, levelStarts }, 'НОО', 'afternoon', period.number)}</span>
-              <span className="time-hint">{periodTime({ periods, shifts, levelStarts }, 'ООО', 'morning', period.number)}</span>
-              <span className="time-hint">{periodTime({ periods, shifts, levelStarts }, 'ООО', 'afternoon', period.number)}</span>
-              <button onClick={() => removePeriod(index)} title="Удалить урок"><Trash2 size={16} /></button>
+        <PanelTitle icon={MoonStar} title="Расписание звонков — своё для каждого уровня и смены" />
+        <p className="hint">Выберите уровень образования и смену — задайте старт и звонки (длительность урока и перемену после него) именно для этой связки. У НОО, ООО и СОО, у 1 и 2 смены могут быть полностью разные звонки.</p>
+        <div className="tt-tabs">
+          <div className="segmented">
+            {LEVELS.map((lv) => <button key={lv} className={level === lv ? 'active' : ''} onClick={() => setLevel(lv)}>{lv}</button>)}
+          </div>
+          <div className="segmented">
+            <button className={shift === 'morning' ? 'active' : ''} onClick={() => setShift('morning')}>1 смена</button>
+            <button className={shift === 'afternoon' ? 'active' : ''} onClick={() => setShift('afternoon')}>2 смена</button>
+          </div>
+        </div>
+        <label className="tt-start">
+          <span>Начало ({level} · {shift === 'morning' ? '1 смена' : '2 смена'})</span>
+          <input type="time" value={current.start || ''} onChange={(e) => patchCurrent(null, e.target.value)} />
+        </label>
+        <div className="tt-grid">
+          <b>Урок</b><b>Длит., мин</b><b>Перемена, мин</b><b>Звонок</b><b></b>
+          {current.periods.map((period, index) => (
+            <React.Fragment key={index}>
+              <input type="number" min="1" max="14" value={period.number} onChange={(e) => updateRow(index, 'number', Number(e.target.value))} />
+              <input type="number" min="20" max="90" value={period.duration} onChange={(e) => updateRow(index, 'duration', Number(e.target.value))} />
+              <input type="number" min="0" max="60" value={period.breakAfter} onChange={(e) => updateRow(index, 'breakAfter', Number(e.target.value))} />
+              <span className="time-hint">{periodTime({ timetables }, level, shift, period.number)}</span>
+              <button onClick={() => removeRow(index)} title="Удалить урок"><Trash2 size={16} /></button>
             </React.Fragment>
           ))}
         </div>
         <div className="segmented">
-          <button onClick={addPeriod}><Plus size={16} /> Добавить урок</button>
-          <button className="primary" onClick={save}><Check size={18} /> Сохранить время</button>
+          <button onClick={addRow}><Plus size={16} /> Добавить урок</button>
+          <button className="primary" onClick={save}><Check size={18} /> Сохранить звонки</button>
         </div>
       </div>
       <div className="panel full-span">
@@ -1855,6 +1842,30 @@ function shiftName(state, shiftId) {
   return shift ? shift.name : shiftId;
 }
 
+function normalizeTimetables(settings) {
+  const src = settings.timetables || {};
+  const levelStarts = settings.levelStarts || {};
+  const defaultPeriods = (settings.periods && settings.periods.length ? settings.periods : [
+    { number: 1, duration: 40, breakAfter: 10 }, { number: 2, duration: 40, breakAfter: 15 },
+    { number: 3, duration: 40, breakAfter: 15 }, { number: 4, duration: 40, breakAfter: 10 },
+    { number: 5, duration: 40, breakAfter: 10 }, { number: 6, duration: 40, breakAfter: 10 },
+    { number: 7, duration: 40, breakAfter: 0 }
+  ]);
+  const cleanPeriods = (list) => list.map((p, i) => ({ number: Number(p.number) || i + 1, duration: Number(p.duration || 40), breakAfter: Number(p.breakAfter || 0) }));
+  const defStart = (lv, sh) => levelStarts?.[lv]?.[sh] || (sh === 'afternoon' ? '13:10' : '08:30');
+  const out = {};
+  for (const lv of LEVELS) {
+    out[lv] = {};
+    for (const sh of ['morning', 'afternoon']) {
+      const t = src?.[lv]?.[sh];
+      out[lv][sh] = (t && Array.isArray(t.periods) && t.periods.length)
+        ? { start: t.start || defStart(lv, sh), periods: cleanPeriods(t.periods) }
+        : { start: defStart(lv, sh), periods: cleanPeriods(defaultPeriods) };
+    }
+  }
+  return out;
+}
+
 function normalizePeriodsForEditor(periods = [], shifts = []) {
   return [...periods]
     .sort((a, b) => Number(a.number) - Number(b.number))
@@ -1905,22 +1916,27 @@ function nextPeriodStart(periods = [], shifts = [], shiftId) {
   return minutesToTime(timeToMinutes(lastStart) + Number(last.duration || 40) + Number(last.breakAfter || 0));
 }
 
-function periodTime(source, level, shiftId, periodNumber) {
+function timetableFor(source, level, shiftId) {
+  const timetables = source.timetables || source.settings?.timetables;
+  const t = timetables?.[level]?.[shiftId];
+  if (t && Array.isArray(t.periods) && t.periods.length) return t;
   const shifts = source.shifts || source.settings?.shifts || [];
-  const periods = source.periods || source.settings?.periods || [];
   const levelStarts = source.levelStarts || source.settings?.levelStarts || {};
-  const period = periods.find((item) => Number(item.number) === Number(periodNumber));
-  if (!period) return '';
   const start = levelStarts?.[level]?.[shiftId]
     || shifts.find((item) => item.id === shiftId)?.startsAt
     || shifts[0]?.startsAt
-    || '08:30';
-  let minutes = timeToMinutes(start);
-  for (const item of [...periods].sort((a, b) => Number(a.number) - Number(b.number))) {
-    if (Number(item.number) === Number(periodNumber)) break;
+    || (shiftId === 'afternoon' ? '14:00' : '08:30');
+  return { start, periods: source.periods || source.settings?.periods || [] };
+}
+
+function periodTime(source, level, shiftId, periodNumber) {
+  const tt = timetableFor(source, level, shiftId);
+  let minutes = timeToMinutes(tt.start);
+  for (const item of [...tt.periods].sort((a, b) => Number(a.number) - Number(b.number))) {
+    if (Number(item.number) === Number(periodNumber)) return minutesToTime(minutes);
     minutes += Number(item.duration || 0) + Number(item.breakAfter || 0);
   }
-  return minutesToTime(minutes);
+  return '';
 }
 
 function timeToMinutes(value) {

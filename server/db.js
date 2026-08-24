@@ -241,6 +241,7 @@ function seedSettings() {
       'ООО': { morning: '08:30', afternoon: '13:10' },
       'СОО': { morning: '08:30', afternoon: '13:10' }
     },
+    timetables: defaultTimetables(),
     sanpin: {
       maxLessonsByGrade: { 1: 4, 2: 5, 3: 5, 4: 5, 5: 6, 6: 6, 7: 7, 8: 7, 9: 7, 10: 7, 11: 7 },
       maxDailyDifficultyByGrade: { 1: 16, 2: 18, 3: 19, 4: 20, 5: 24, 6: 25, 7: 26, 8: 27, 9: 28, 10: 29, 11: 29 }
@@ -250,6 +251,31 @@ function seedSettings() {
   const stmt = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [key, value] of Object.entries(defaults)) stmt.run(key, JSON.stringify(value));
   ensureAdminPasswordHash();
+}
+
+function defaultTimetables() {
+  const basePeriods = () => [
+    { number: 1, duration: 40, breakAfter: 10 },
+    { number: 2, duration: 40, breakAfter: 15 },
+    { number: 3, duration: 40, breakAfter: 15 },
+    { number: 4, duration: 40, breakAfter: 10 },
+    { number: 5, duration: 40, breakAfter: 10 },
+    { number: 6, duration: 40, breakAfter: 10 },
+    { number: 7, duration: 40, breakAfter: 0 }
+  ];
+  const starts = {
+    'НОО': { morning: '08:00', afternoon: '12:20' },
+    'ООО': { morning: '08:30', afternoon: '13:10' },
+    'СОО': { morning: '08:30', afternoon: '13:10' }
+  };
+  const out = {};
+  for (const level of ['НОО', 'ООО', 'СОО']) {
+    out[level] = {
+      morning: { start: starts[level].morning, periods: basePeriods() },
+      afternoon: { start: starts[level].afternoon, periods: basePeriods() }
+    };
+  }
+  return out;
 }
 
 function passwordRecord(password, forceChange = false) {

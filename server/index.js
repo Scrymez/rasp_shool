@@ -305,7 +305,7 @@ app.get('/api/templates/class-advisors.xlsx', (_req, res) => {
 });
 
 app.get('/api/templates/schedule.xlsx', (_req, res) => {
-  const settings = { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), levelStarts: json.get('levelStarts') };
+  const settings = { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), levelStarts: json.get('levelStarts'), timetables: json.get('timetables') };
   const classes = allClasses();
   const scheduleClasses = classes.length ? classes : defaultTemplateClasses();
   const sheets = [
@@ -542,13 +542,14 @@ app.post('/api/settings', (req, res) => {
   json.set('periods', req.body.periods || json.get('periods'));
   json.set('shifts', req.body.shifts || json.get('shifts'));
   json.set('levelStarts', req.body.levelStarts || json.get('levelStarts'));
+  json.set('timetables', req.body.timetables || json.get('timetables'));
   json.set('sanpin', req.body.sanpin || json.get('sanpin'));
   audit('update', 'settings');
   res.json({ settings: settingsPayload() });
 });
 
 function settingsPayload() {
-  return { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), levelStarts: json.get('levelStarts'), sanpin: json.get('sanpin') };
+  return { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), levelStarts: json.get('levelStarts'), timetables: json.get('timetables'), sanpin: json.get('sanpin') };
 }
 
 app.post('/api/generate', (req, res) => {
@@ -564,6 +565,7 @@ app.post('/api/generate', (req, res) => {
       periods: json.get('periods'),
       shifts: json.get('shifts'),
       levelStarts: json.get('levelStarts'),
+      timetables: json.get('timetables'),
       sanpin: json.get('sanpin'),
       teacherConstraints: allTeacherConstraints(),
       teacherAvailability: allTeacherAvailability(),
@@ -666,7 +668,7 @@ app.get('/api/export/schedules/:id.xlsx', async (req, res) => {
       for (const day of payload.days) {
         for (const period of payload.periods) {
           const cell = grid[day.id]?.[period.number];
-          aoa.push([day.name, period.number, `${periodTime(payload, classLevel, classShift, period.number)} / ${period.duration} мин`, cell?.subject || '', cell?.teacher || '', cell?.room || '', cell?.difficulty || '']);
+          aoa.push([day.name, period.number, `${periodTime(payload, classLevel, classShift, period.number)} / ${periodDuration(payload, classLevel, classShift, period.number)} мин`, cell?.subject || '', cell?.teacher || '', cell?.room || '', cell?.difficulty || '']);
         }
       }
       sheets.push({ name: safeSheet(`${className}-${week}`), rows: aoa });
@@ -1164,7 +1166,7 @@ function fullScheduleTemplateRows(settings, classes) {
         className,
         shiftLabel(settings, shiftId),
         `${period.number} урок`,
-        `${periodTime(settings, schoolClass.level, shiftId, period.number)} / ${period.duration} мин`,
+        `${periodTime(settings, schoolClass.level, shiftId, period.number)} / ${periodDuration(settings, schoolClass.level, shiftId, period.number)} мин`,
         ...activeDays.map(() => '')
       ]);
     }
@@ -1186,7 +1188,7 @@ function classScheduleTemplateRows(settings, schoolClass) {
   ];
   const activeDays = settings.days.filter((item) => item.enabled);
   for (const period of settings.periods) {
-    rows.push([`${period.number} урок`, `${periodTime(settings, schoolClass.level, shiftId, period.number)} / ${period.duration} мин`, ...activeDays.map(() => '')]);
+    rows.push([`${period.number} урок`, `${periodTime(settings, schoolClass.level, shiftId, period.number)} / ${periodDuration(settings, schoolClass.level, shiftId, period.number)} мин`, ...activeDays.map(() => '')]);
   }
   return rows;
 }
@@ -1250,7 +1252,7 @@ function classScheduleGridRows(payload, className, shift, week, grid) {
     ['Неделя', weekLabel(week)],
     [],
     ['День', ...payload.periods.map((period) => `${period.number} урок`)],
-    ['Время', ...payload.periods.map((period) => `${periodTime(payload, level, shift, period.number)} / ${period.duration} мин`)]
+    ['Время', ...payload.periods.map((period) => `${periodTime(payload, level, shift, period.number)} / ${periodDuration(payload, level, shift, period.number)} мин`)]
   ];
   for (const day of payload.days) {
     rows.push([
@@ -1475,19 +1477,30 @@ function shiftLabel(payload, shiftId) {
   return shift ? shift.name : shiftId;
 }
 
-function periodTime(payload, level, shiftId, periodNumber) {
-  const period = payload.periods.find((item) => item.number === periodNumber);
-  if (!period) return '';
-  const start = payload.levelStarts?.[level]?.[shiftId]
-    || payload.shifts?.find((item) => item.id === shiftId)?.startsAt
-    || payload.shifts?.[0]?.startsAt
-    || '08:30';
-  let minutes = timeToMinutes(start);
-  for (const item of [...payload.periods].sort((a, b) => Number(a.number) - Number(b.number))) {
-    if (item.number === periodNumber) break;
+function timetableFor(source, level, shiftId) {
+  const t = source.timetables?.[level]?.[shiftId];
+  if (t && Array.isArray(t.periods) && t.periods.length) return t;
+  const start = source.levelStarts?.[level]?.[shiftId]
+    || source.shifts?.find((item) => item.id === shiftId)?.startsAt
+    || source.shifts?.[0]?.startsAt
+    || (shiftId === 'afternoon' ? '14:00' : '08:30');
+  return { start, periods: source.periods || [] };
+}
+
+function periodTime(source, level, shiftId, periodNumber) {
+  const tt = timetableFor(source, level, shiftId);
+  let minutes = timeToMinutes(tt.start);
+  for (const item of [...tt.periods].sort((a, b) => Number(a.number) - Number(b.number))) {
+    if (Number(item.number) === Number(periodNumber)) return minutesToTime(minutes);
     minutes += Number(item.duration || 0) + Number(item.breakAfter || 0);
   }
-  return minutesToTime(minutes);
+  return '';
+}
+
+function periodDuration(source, level, shiftId, periodNumber) {
+  const tt = timetableFor(source, level, shiftId);
+  const p = tt.periods.find((item) => Number(item.number) === Number(periodNumber));
+  return p ? Number(p.duration || 0) : 0;
 }
 
 function timeToMinutes(value) {
