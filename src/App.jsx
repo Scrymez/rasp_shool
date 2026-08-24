@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import {
   BarChart3, BookOpen, CalendarDays, Check, ChevronRight, Database, Download, FileDown, FileSpreadsheet,
   DoorOpen, FolderOpen, KeyRound, MoonStar, Pencil, Play, Plus, Printer, Save, SaveAll, School,
-  RefreshCw, ShieldCheck, Sparkles, Trash2, Upload, Users, X
+  RefreshCw, Search, ShieldCheck, Sparkles, Trash2, Upload, Users, X
 } from 'lucide-react';
 import './styles.css';
 
@@ -537,9 +537,14 @@ function Subjects({ state, refresh, setNotice, registerCommit }) {
   const [name, setName] = useState('');
   const [newDifficulty, setNewDifficulty] = useState(3);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState(state.subjects[0]?.id || null);
   const selected = state.subjects.find((item) => item.id === selectedId) || state.subjects[0];
   const [draft, setDraft] = useState(null);
+  const filteredSubjects = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? state.subjects.filter((s) => s.name.toLowerCase().includes(q)) : state.subjects;
+  }, [state.subjects, query]);
 
   useEffect(() => {
     if (!selected) return;
@@ -621,8 +626,13 @@ function Subjects({ state, refresh, setNotice, registerCommit }) {
             <DifficultyRulesModal onClose={() => setRulesOpen(false)} />
           </ModalFrame>
         )}
+        <div className="search-field">
+          <Search size={16} />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск предмета..." />
+          {query && <button onClick={() => setQuery('')} title="Очистить"><X size={15} /></button>}
+        </div>
         <div className="subject-list">
-          {state.subjects.map((subject) => (
+          {filteredSubjects.map((subject) => (
             <button key={subject.id} className={selected?.id === subject.id ? 'active' : ''} onClick={() => selectSubject(subject.id)}>
               <span>{subject.name}</span>
               <small>
@@ -631,6 +641,7 @@ function Subjects({ state, refresh, setNotice, registerCommit }) {
               </small>
             </button>
           ))}
+          {!filteredSubjects.length && <p className="hint">Ничего не найдено</p>}
         </div>
       </div>
       <div className="panel">
@@ -662,15 +673,16 @@ function Subjects({ state, refresh, setNotice, registerCommit }) {
             <div className="parallel-grid">
               <b>Параллель</b><b>Часов в неделю</b><b>Привязка</b>
               {Array.from({ length: 11 }, (_, i) => i + 1).map((grade) => {
-                const hours = Number(draft.parallelHours?.[grade] || 0);
+                const rawHours = draft.parallelHours?.[grade] ?? 0;
+                const hours = Number(rawHours) || 0;
                 const restricted = (draft.allowedGrades?.length > 0) && !draft.allowedGrades.includes(grade);
                 const locked = restricted && !draft.unlocked;
                 return (
                   <React.Fragment key={grade}>
                     <span>{grade}{restricted && <small className="grade-flag">{locked ? ' 🔒' : ' вне ФГОС'}</small>}</span>
-                    <input type="number" min="0" max="12" step="0.5" value={locked ? 0 : hours} disabled={locked} onChange={(e) => setDraft({ ...draft, parallelHours: { ...draft.parallelHours, [grade]: Number(e.target.value) } })} />
+                    <input type="number" min="0" max="12" step="0.5" value={locked ? 0 : rawHours} disabled={locked} onChange={(e) => setDraft({ ...draft, parallelHours: { ...draft.parallelHours, [grade]: e.target.value } })} />
                     <label>
-                      <input type="checkbox" disabled={locked} checked={hours > 0} onChange={(e) => setDraft({ ...draft, parallelHours: { ...draft.parallelHours, [grade]: e.target.checked ? Math.max(1, hours || 1) : 0 } })} />
+                      <input type="checkbox" disabled={locked} checked={hours > 0} onChange={(e) => setDraft({ ...draft, parallelHours: { ...draft.parallelHours, [grade]: e.target.checked ? (hours || 1) : 0 } })} />
                       {locked ? 'заблокировано' : hours > 0 ? 'активна' : 'нет'}
                     </label>
                   </React.Fragment>
@@ -1016,7 +1028,7 @@ function Assignments({ state, refresh, setNotice, registerCommit }) {
       subjectId: Number(row.subjectId),
       teacherId: row.teacherId ? Number(row.teacherId) : null,
       roomId: row.roomId ? Number(row.roomId) : null,
-      weeklyHours: Math.min(10, Math.max(1, Number(row.weeklyHours) || 1)),
+      weeklyHours: Math.min(10, Math.max(0.5, Number(row.weeklyHours) || 0.5)),
       paired: row.paired ? 1 : 0
     }));
     try {
@@ -1053,15 +1065,12 @@ function Assignments({ state, refresh, setNotice, registerCommit }) {
             <React.Fragment key={row.id}>
               <span>{row.grade}{row.letter}</span>
               <span>{row.subjectName}</span>
-              <select value={row.teacherId || ''} onChange={(e) => updateRows(rows, setRows, index, 'teacherId', e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Не назначен</option>
-                {options.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.fullName}</option>)}
-              </select>
+              <TeacherPicker value={row.teacherId || null} teachers={options} onChange={(id) => updateRows(rows, setRows, index, 'teacherId', id)} placeholder="Не назначен" />
               <select value={row.roomId || ''} onChange={(e) => updateRows(rows, setRows, index, 'roomId', e.target.value ? Number(e.target.value) : null)}>
                 <option value="">Любой</option>
                 {state.rooms.map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}
               </select>
-              <input type="number" min="0.5" max="10" step="0.5" value={row.weeklyHours} onChange={(e) => updateRows(rows, setRows, index, 'weeklyHours', Number(e.target.value))} />
+              <input type="number" min="0.5" max="10" step="0.5" value={row.weeklyHours} onChange={(e) => updateRows(rows, setRows, index, 'weeklyHours', e.target.value)} />
               <span className="paired-cell">
                 <input type="checkbox" checked={!!row.paired} onChange={(e) => updateRows(rows, setRows, index, 'paired', e.target.checked)} title="Ставить уроки этого предмета подряд в один день" />
               </span>
@@ -1175,9 +1184,7 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
           <>
             <div className="filter-bar">
               <label>Учитель</label>
-              <select value={availTeacherId} onChange={(e) => setAvailTeacherId(Number(e.target.value))}>
-                {uniqueTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.fullName}</option>)}
-              </select>
+              <TeacherPicker value={availTeacherId} teachers={uniqueTeachers} allowEmpty={false} onChange={(id) => { if (id) setAvailTeacherId(id); }} />
             </div>
             <div className="availability-grid">
               <b>День</b><b>Режим</b><b>Приходит</b><b>Уходит</b>
@@ -1713,6 +1720,31 @@ function ReportTable({ headers, rows }) {
 
 function PanelTitle({ icon: Icon, title }) {
   return <h2 className="panel-title"><Icon size={21} /> {title}</h2>;
+}
+
+// Searchable teacher input backed by a native datalist (type to filter, not clipped by scroll containers).
+function TeacherPicker({ value, onChange, teachers, allowEmpty = true, placeholder = 'Поиск учителя...' }) {
+  const listId = useId();
+  const selected = teachers.find((t) => t.id === value);
+  return (
+    <>
+      <input
+        list={listId}
+        key={value ?? 'none'}
+        defaultValue={selected ? selected.fullName : ''}
+        placeholder={placeholder}
+        onChange={(e) => {
+          const name = e.target.value.trim();
+          if (!name) { if (allowEmpty) onChange(null); return; }
+          const match = teachers.find((t) => t.fullName === name);
+          if (match) onChange(match.id);
+        }}
+      />
+      <datalist id={listId}>
+        {teachers.map((t) => <option value={t.fullName} key={t.id} />)}
+      </datalist>
+    </>
+  );
 }
 
 function updateRows(rows, setter, index, key, value) {
