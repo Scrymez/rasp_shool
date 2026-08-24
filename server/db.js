@@ -236,6 +236,11 @@ function seedSettings() {
       { id: 'morning', name: '1 смена', startsAt: '08:30', label: 'утро - обед' },
       { id: 'afternoon', name: '2 смена', startsAt: '14:00', label: 'обед - вечер' }
     ],
+    levelStarts: {
+      'НОО': { morning: '08:00', afternoon: '12:20' },
+      'ООО': { morning: '08:30', afternoon: '13:10' },
+      'СОО': { morning: '08:30', afternoon: '13:10' }
+    },
     sanpin: {
       maxLessonsByGrade: { 1: 4, 2: 5, 3: 5, 4: 5, 5: 6, 6: 6, 7: 7, 8: 7, 9: 7, 10: 7, 11: 7 },
       maxDailyDifficultyByGrade: { 1: 16, 2: 18, 3: 19, 4: 20, 5: 24, 6: 25, 7: 26, 8: 27, 9: 28, 10: 29, 11: 29 }

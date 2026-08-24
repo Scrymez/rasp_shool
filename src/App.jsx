@@ -1128,7 +1128,7 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
       return empty ? others : [...others, next];
     });
   }
-  const timeOf = (n) => periodTime(state.settings, 'morning', n);
+  const timeOf = (n) => periodTime(state.settings, null, 'morning', n);
 
   function addTalksBlock() {
     setBlocks([...blocks, { dayId: 'mon', shift: '', classId: null, periodNumber: 1, reason: 'Разговоры о важном' }]);
@@ -1256,18 +1256,28 @@ function TimeSettings({ state, refresh, setNotice, registerCommit }) {
   const [days, setDays] = useState(state.settings.days);
   const [periods, setPeriods] = useState(() => normalizePeriodsForEditor(state.settings.periods, state.settings.shifts));
   const [shifts, setShifts] = useState(state.settings.shifts || SHIFTS.map((shift) => ({ ...shift, startsAt: shift.id === 'morning' ? '08:30' : '14:00' })));
+  const [levelStarts, setLevelStarts] = useState(() => ({
+    'НОО': { morning: '08:00', afternoon: '12:20' },
+    'ООО': { morning: '08:30', afternoon: '13:10' },
+    'СОО': { morning: '08:30', afternoon: '13:10' },
+    ...(state.settings.levelStarts || {})
+  }));
   const [sanpin, setSanpin] = useState(state.settings.sanpin);
 
   async function save() {
-    await api('/settings', { method: 'POST', body: { days, periods: normalizePeriodsForSave(periods), shifts, sanpin } });
+    await api('/settings', { method: 'POST', body: { days, periods: normalizePeriodsForSave(periods), shifts, levelStarts, sanpin } });
     await refresh();
-    setNotice('Неделя и перемены настроены');
+    setNotice('Время смен и звонки настроены');
   }
 
   useEffect(() => {
     registerCommit?.(save);
     return () => registerCommit?.(null);
-  }, [days, periods, shifts, sanpin]);
+  }, [days, periods, shifts, levelStarts, sanpin]);
+
+  function setLevelStart(level, shiftId, value) {
+    setLevelStarts({ ...levelStarts, [level]: { ...(levelStarts[level] || {}), [shiftId]: value } });
+  }
 
   function updatePeriod(index, key, value) {
     setPeriods(periods.map((period, periodIndex) => periodIndex === index ? { ...period, [key]: value } : period));
@@ -1309,25 +1319,33 @@ function TimeSettings({ state, refresh, setNotice, registerCommit }) {
         </div>
       </div>
       <div className="panel">
-        <PanelTitle icon={MoonStar} title="Уроки и перемены" />
-        <p className="hint">Каждый урок редактируется отдельно: старт 1 и 2 смены, длительность урока, перемена после урока.</p>
-        <div className="shift-settings">
-          {shifts.map((shift, index) => (
-            <label key={shift.id}>
-              <span>{shift.name}</span>
-              <input type="time" value={shift.startsAt} onChange={(e) => updateRows(shifts, setShifts, index, 'startsAt', e.target.value)} />
-            </label>
+        <PanelTitle icon={CalendarDays} title="Старт смен по уровням" />
+        <p className="hint">У каждого уровня образования своё время начала 1 и 2 смены. Пример: у НОО 2 смена с 12:20, у ООО — с 13:10. Звонки уроков считаются от старта смены с учётом длительностей и перемен.</p>
+        <div className="level-starts-grid">
+          <b>Уровень</b><b>1 смена</b><b>2 смена</b>
+          {LEVELS.map((level) => (
+            <React.Fragment key={level}>
+              <span>{level}</span>
+              <input type="time" value={levelStarts[level]?.morning || ''} onChange={(e) => setLevelStart(level, 'morning', e.target.value)} />
+              <input type="time" value={levelStarts[level]?.afternoon || ''} onChange={(e) => setLevelStart(level, 'afternoon', e.target.value)} />
+            </React.Fragment>
           ))}
         </div>
+      </div>
+      <div className="panel full-span">
+        <PanelTitle icon={MoonStar} title="Уроки и перемены (звонки)" />
+        <p className="hint">Длительность урока и перемены после него — общие для всех. Время звонков считается отдельно для каждого уровня и смены (колонки справа — для примера).</p>
         <div className="period-editor-grid">
-          <b>Урок</b><b>Старт 1 смена</b><b>Старт 2 смена</b><b>Длит.</b><b>Перем.</b><b></b>
+          <b>Урок</b><b>Длит., мин</b><b>Перемена, мин</b><b>НОО · 1см</b><b>НОО · 2см</b><b>ООО · 1см</b><b>ООО · 2см</b><b></b>
           {periods.map((period, index) => (
             <React.Fragment key={`${period.number}-${index}`}>
               <input type="number" min="1" max="14" value={period.number} onChange={(e) => updatePeriod(index, 'number', Number(e.target.value))} />
-              <input type="time" value={period.startsAt?.morning || periodTime({ periods, shifts }, 'morning', period.number)} onChange={(e) => updatePeriodStart(index, 'morning', e.target.value)} />
-              <input type="time" value={period.startsAt?.afternoon || periodTime({ periods, shifts }, 'afternoon', period.number)} onChange={(e) => updatePeriodStart(index, 'afternoon', e.target.value)} />
               <input type="number" min="20" max="90" value={period.duration} onChange={(e) => updatePeriod(index, 'duration', Number(e.target.value))} />
               <input type="number" min="0" max="60" value={period.breakAfter} onChange={(e) => updatePeriod(index, 'breakAfter', Number(e.target.value))} />
+              <span className="time-hint">{periodTime({ periods, shifts, levelStarts }, 'НОО', 'morning', period.number)}</span>
+              <span className="time-hint">{periodTime({ periods, shifts, levelStarts }, 'НОО', 'afternoon', period.number)}</span>
+              <span className="time-hint">{periodTime({ periods, shifts, levelStarts }, 'ООО', 'morning', period.number)}</span>
+              <span className="time-hint">{periodTime({ periods, shifts, levelStarts }, 'ООО', 'afternoon', period.number)}</span>
               <button onClick={() => removePeriod(index)} title="Удалить урок"><Trash2 size={16} /></button>
             </React.Fragment>
           ))}
@@ -1551,6 +1569,7 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
   const safeWeek = schedule.classes[className]?.[weekName] ? weekName : weekNames[0];
   const grid = schedule.classes[className][safeWeek];
   const classShift = schedule.classMeta?.[className]?.shift || 'morning';
+  const classLevel = schedule.classMeta?.[className]?.level;
   async function saveCell() {
     const result = await api(`/schedules/${schedule.id}/cell`, {
       method: 'PATCH',
@@ -1603,7 +1622,7 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
       </div>
       <div className="schedule-grid" style={{ gridTemplateColumns: `120px repeat(${schedule.periods.length}, minmax(92px, 1fr))` }}>
         <b>День</b>
-        {schedule.periods.map((period) => <b key={period.number}>{period.number}<small>{periodTime(schedule, classShift, period.number)}</small></b>)}
+        {schedule.periods.map((period) => <b key={period.number}>{period.number}<small>{periodTime(schedule, classLevel, classShift, period.number)}</small></b>)}
         {schedule.days.map((day) => (
           <React.Fragment key={day.id}>
             <b>{day.name}</b>
@@ -1886,16 +1905,20 @@ function nextPeriodStart(periods = [], shifts = [], shiftId) {
   return minutesToTime(timeToMinutes(lastStart) + Number(last.duration || 40) + Number(last.breakAfter || 0));
 }
 
-function periodTime(source, shiftId, periodNumber) {
+function periodTime(source, level, shiftId, periodNumber) {
   const shifts = source.shifts || source.settings?.shifts || [];
   const periods = source.periods || source.settings?.periods || [];
+  const levelStarts = source.levelStarts || source.settings?.levelStarts || {};
   const period = periods.find((item) => Number(item.number) === Number(periodNumber));
-  if (period?.startsAt?.[shiftId]) return period.startsAt[shiftId];
-  const shift = shifts.find((item) => item.id === shiftId) || shifts[0] || { startsAt: '08:30' };
-  let minutes = timeToMinutes(shift.startsAt);
-  for (const period of periods) {
-    if (period.number === periodNumber) break;
-    minutes += Number(period.duration || 0) + Number(period.breakAfter || 0);
+  if (!period) return '';
+  const start = levelStarts?.[level]?.[shiftId]
+    || shifts.find((item) => item.id === shiftId)?.startsAt
+    || shifts[0]?.startsAt
+    || '08:30';
+  let minutes = timeToMinutes(start);
+  for (const item of [...periods].sort((a, b) => Number(a.number) - Number(b.number))) {
+    if (Number(item.number) === Number(periodNumber)) break;
+    minutes += Number(item.duration || 0) + Number(item.breakAfter || 0);
   }
   return minutesToTime(minutes);
 }

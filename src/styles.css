@@ -1315,11 +1315,23 @@ output {
 
 .period-editor-grid {
   display: grid;
-  grid-template-columns: 70px minmax(110px, 1fr) minmax(110px, 1fr) 84px 84px 42px;
+  grid-template-columns: 64px 92px 92px repeat(4, minmax(64px, 1fr)) 42px;
   gap: 8px;
   align-items: center;
   margin-top: 12px;
 }
+
+.level-starts-grid {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.6fr) 1fr 1fr;
+  gap: 10px 12px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.level-starts-grid b { color: var(--gold); }
+.level-starts-grid span { font-weight: 600; }
+.level-starts-grid input { width: 100%; }
 
 .period-editor-grid b {
   color: var(--gold);

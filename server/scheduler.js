@@ -23,6 +23,7 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
     days,
     periods,
     shifts: settings.shifts || [],
+    levelStarts: settings.levelStarts || {},
     classMeta: {},
     classes: {},
     diagnostics: [],
@@ -40,7 +41,7 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
   for (const schoolClass of classOrder) {
     const key = classKey(schoolClass);
     const shift = schoolClass.shift || 'morning';
-    payload.classMeta[key] = { shift };
+    payload.classMeta[key] = { shift, level: schoolClass.level };
     payload.classes[key] = {};
     for (const variant of variants) payload.classes[key][variant] = emptyGrid(days, periods);
 
@@ -78,7 +79,7 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
           paired: lesson.paired ? 1 : 0
         };
         payload.classes[key][variant][slot.day.id][slot.period.number] = cell;
-        reserveResource({ busy, settings, variant, shift, dayId: slot.day.id, period: slot.period, lesson });
+        reserveResource({ busy, settings, variant, level: schoolClass.level, shift, dayId: slot.day.id, period: slot.period, lesson });
       }
     }
   }
@@ -163,8 +164,8 @@ function violatesHardRules({ grid, day, period, lesson, busy, settings, schoolCl
   if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return true;
   if (isTeacherUnavailable(settings, lesson.teacherId, day.id, period.number, shift)) return true;
   if (isOutsideAvailability(settings, lesson.teacherId, day.id, period.number)) return true;
-  if (lesson.teacherId && resourceBusy(busy.teachers, settings, variant, shift, lesson.teacherId, day.id, period)) return true;
-  if (lesson.roomId && resourceBusy(busy.rooms, settings, variant, shift, lesson.roomId, day.id, period)) return true;
+  if (lesson.teacherId && resourceBusy(busy.teachers, settings, variant, schoolClass.level, shift, lesson.teacherId, day.id, period)) return true;
+  if (lesson.roomId && resourceBusy(busy.rooms, settings, variant, schoolClass.level, shift, lesson.roomId, day.id, period)) return true;
   return false;
 }
 
@@ -216,14 +217,14 @@ function preferredPeriodPenalty(periodNumber, difficulty) {
   return ({ 1: 24, 2: 14, 3: 8, 4: 2, 5: 0, 6: 4, 7: 10 })[periodNumber] ?? 30;
 }
 
-function reserveResource({ busy, settings, variant, shift, dayId, period, lesson }) {
-  const interval = periodInterval(settings, shift, period.number);
+function reserveResource({ busy, settings, variant, level, shift, dayId, period, lesson }) {
+  const interval = periodInterval(settings, level, shift, period.number);
   if (lesson.teacherId) addBusy(busy.teachers, variant, lesson.teacherId, dayId, interval);
   if (lesson.roomId) addBusy(busy.rooms, variant, lesson.roomId, dayId, interval);
 }
 
-function resourceBusy(store, settings, variant, shift, resourceId, dayId, period) {
-  const interval = periodInterval(settings, shift, period.number);
+function resourceBusy(store, settings, variant, level, shift, resourceId, dayId, period) {
+  const interval = periodInterval(settings, level, shift, period.number);
   const entries = store.get(resourceBusyKey(variant, resourceId, dayId)) || [];
   return entries.some((item) => intervalsOverlap(item, interval));
 }
@@ -239,11 +240,17 @@ function resourceBusyKey(variant, resourceId, dayId) {
   return `${variant}:${resourceId}:${dayId}`;
 }
 
-function periodInterval(settings, shiftId, periodNumber) {
-  const shift = (settings.shifts || []).find((item) => item.id === shiftId);
-  let cursor = timeToMinutes(shift?.startsAt || '08:30');
-  for (const period of settings.periods) {
-    const start = period.startsAt?.[shiftId] ? timeToMinutes(period.startsAt[shiftId]) : cursor;
+function dayStartMinutes(settings, level, shiftId) {
+  const start = settings.levelStarts?.[level]?.[shiftId]
+    || (settings.shifts || []).find((item) => item.id === shiftId)?.startsAt
+    || (shiftId === 'afternoon' ? '14:00' : '08:30');
+  return timeToMinutes(start);
+}
+
+function periodInterval(settings, level, shiftId, periodNumber) {
+  let cursor = dayStartMinutes(settings, level, shiftId);
+  for (const period of [...settings.periods].sort((a, b) => Number(a.number) - Number(b.number))) {
+    const start = cursor;
     const end = start + Number(period.duration || 40);
     if (period.number === periodNumber) return { start, end };
     cursor = end + Number(period.breakAfter || 0);

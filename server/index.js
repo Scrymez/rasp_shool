@@ -84,7 +84,7 @@ app.get('/api/bootstrap', (_req, res) => {
     scheduleBlocks: allScheduleBlocks(),
     auditLog: allAuditLog(),
     assignments: allAssignments(),
-    settings: { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), sanpin: json.get('sanpin') },
+    settings: settingsPayload(),
     schedules: db.prepare('SELECT id, title, week_mode AS weekMode, created_at AS createdAt FROM schedules ORDER BY id DESC').all()
   });
 });
@@ -305,7 +305,7 @@ app.get('/api/templates/class-advisors.xlsx', (_req, res) => {
 });
 
 app.get('/api/templates/schedule.xlsx', (_req, res) => {
-  const settings = { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts') };
+  const settings = { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), levelStarts: json.get('levelStarts') };
   const classes = allClasses();
   const scheduleClasses = classes.length ? classes : defaultTemplateClasses();
   const sheets = [
@@ -541,10 +541,15 @@ app.post('/api/settings', (req, res) => {
   json.set('days', req.body.days || json.get('days'));
   json.set('periods', req.body.periods || json.get('periods'));
   json.set('shifts', req.body.shifts || json.get('shifts'));
+  json.set('levelStarts', req.body.levelStarts || json.get('levelStarts'));
   json.set('sanpin', req.body.sanpin || json.get('sanpin'));
   audit('update', 'settings');
-  res.json({ settings: { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), sanpin: json.get('sanpin') } });
+  res.json({ settings: settingsPayload() });
 });
+
+function settingsPayload() {
+  return { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), levelStarts: json.get('levelStarts'), sanpin: json.get('sanpin') };
+}
 
 app.post('/api/generate', (req, res) => {
   const body = z.object({
@@ -558,6 +563,7 @@ app.post('/api/generate', (req, res) => {
       days: json.get('days'),
       periods: json.get('periods'),
       shifts: json.get('shifts'),
+      levelStarts: json.get('levelStarts'),
       sanpin: json.get('sanpin'),
       teacherConstraints: allTeacherConstraints(),
       teacherAvailability: allTeacherAvailability(),
@@ -654,12 +660,13 @@ app.get('/api/export/schedules/:id.xlsx', async (req, res) => {
   for (const [className, weeks] of Object.entries(payload.classes)) {
     for (const [week, grid] of Object.entries(weeks)) {
       const classShift = payload.classMeta?.[className]?.shift || 'morning';
+      const classLevel = payload.classMeta?.[className]?.level;
       const shiftName = shiftLabel(payload, classShift);
       const aoa = [['Класс', className], ['Смена', shiftName], ['Неделя', weekLabel(week)], [], ['День', 'Урок', 'Время', 'Предмет', 'Учитель', 'Кабинет', 'Сложность']];
       for (const day of payload.days) {
         for (const period of payload.periods) {
           const cell = grid[day.id]?.[period.number];
-          aoa.push([day.name, period.number, `${periodTime(payload, classShift, period.number)} / ${period.duration} мин`, cell?.subject || '', cell?.teacher || '', cell?.room || '', cell?.difficulty || '']);
+          aoa.push([day.name, period.number, `${periodTime(payload, classLevel, classShift, period.number)} / ${period.duration} мин`, cell?.subject || '', cell?.teacher || '', cell?.room || '', cell?.difficulty || '']);
         }
       }
       sheets.push({ name: safeSheet(`${className}-${week}`), rows: aoa });
@@ -1157,7 +1164,7 @@ function fullScheduleTemplateRows(settings, classes) {
         className,
         shiftLabel(settings, shiftId),
         `${period.number} урок`,
-        `${periodTime(settings, shiftId, period.number)} / ${period.duration} мин`,
+        `${periodTime(settings, schoolClass.level, shiftId, period.number)} / ${period.duration} мин`,
         ...activeDays.map(() => '')
       ]);
     }
@@ -1179,7 +1186,7 @@ function classScheduleTemplateRows(settings, schoolClass) {
   ];
   const activeDays = settings.days.filter((item) => item.enabled);
   for (const period of settings.periods) {
-    rows.push([`${period.number} урок`, `${periodTime(settings, shiftId, period.number)} / ${period.duration} мин`, ...activeDays.map(() => '')]);
+    rows.push([`${period.number} урок`, `${periodTime(settings, schoolClass.level, shiftId, period.number)} / ${period.duration} мин`, ...activeDays.map(() => '')]);
   }
   return rows;
 }
@@ -1236,13 +1243,14 @@ function fullScheduleGridRows(payload) {
 }
 
 function classScheduleGridRows(payload, className, shift, week, grid) {
+  const level = payload.classMeta?.[className]?.level;
   const rows = [
     ['Класс', className],
     ['Смена', shiftLabel(payload, shift)],
     ['Неделя', weekLabel(week)],
     [],
     ['День', ...payload.periods.map((period) => `${period.number} урок`)],
-    ['Время', ...payload.periods.map((period) => `${periodTime(payload, shift, period.number)} / ${period.duration} мин`)]
+    ['Время', ...payload.periods.map((period) => `${periodTime(payload, level, shift, period.number)} / ${period.duration} мин`)]
   ];
   for (const day of payload.days) {
     rows.push([
@@ -1439,7 +1447,7 @@ function printHtml(payload) {
       <section>
         <h2>${escapeHtml(className)} · ${escapeHtml(shiftLabel(payload, payload.classMeta?.[className]?.shift || 'morning'))} · ${escapeHtml(weekLabel(week))}</h2>
         <table>
-          <thead><tr><th>День</th>${payload.periods.map((period) => `<th>${period.number}<br><small>${escapeHtml(periodTime(payload, payload.classMeta?.[className]?.shift || 'morning', period.number))}</small></th>`).join('')}</tr></thead>
+          <thead><tr><th>День</th>${payload.periods.map((period) => `<th>${period.number}<br><small>${escapeHtml(periodTime(payload, payload.classMeta?.[className]?.level, payload.classMeta?.[className]?.shift || 'morning', period.number))}</small></th>`).join('')}</tr></thead>
           <tbody>${payload.days.map((day) => `
             <tr><th>${escapeHtml(day.name)}</th>${payload.periods.map((period) => {
               const cell = grid[day.id]?.[period.number];
@@ -1467,13 +1475,15 @@ function shiftLabel(payload, shiftId) {
   return shift ? shift.name : shiftId;
 }
 
-function periodTime(payload, shiftId, periodNumber) {
-  const shift = payload.shifts?.find((item) => item.id === shiftId) || payload.shifts?.[0] || { startsAt: '08:30' };
+function periodTime(payload, level, shiftId, periodNumber) {
   const period = payload.periods.find((item) => item.number === periodNumber);
   if (!period) return '';
-  if (period.startsAt?.[shiftId]) return period.startsAt[shiftId];
-  let minutes = timeToMinutes(shift.startsAt);
-  for (const item of payload.periods) {
+  const start = payload.levelStarts?.[level]?.[shiftId]
+    || payload.shifts?.find((item) => item.id === shiftId)?.startsAt
+    || payload.shifts?.[0]?.startsAt
+    || '08:30';
+  let minutes = timeToMinutes(start);
+  for (const item of [...payload.periods].sort((a, b) => Number(a.number) - Number(b.number))) {
     if (item.number === periodNumber) break;
     minutes += Number(item.duration || 0) + Number(item.breakAfter || 0);
   }
@@ -1498,6 +1508,7 @@ function renderSchedulePdf(doc, payload) {
   for (const [className, weeks] of Object.entries(payload.classes)) {
     for (const [week, grid] of Object.entries(weeks)) {
       const shift = payload.classMeta?.[className]?.shift || 'morning';
+      const level = payload.classMeta?.[className]?.level;
       doc.fontSize(14).text(`${className} · ${shiftLabel(payload, shift)} · ${weekLabel(week)}`);
       doc.moveDown(0.4);
       for (const day of payload.days) {
@@ -1505,7 +1516,7 @@ function renderSchedulePdf(doc, payload) {
         for (const period of payload.periods) {
           const cell = grid[day.id]?.[period.number];
           if (cell) {
-            doc.fontSize(9).text(`${period.number}. ${periodTime(payload, shift, period.number)} ${cell.subject} · ${cell.teacher || ''} · ${cell.room || ''}`);
+            doc.fontSize(9).text(`${period.number}. ${periodTime(payload, level, shift, period.number)} ${cell.subject} · ${cell.teacher || ''} · ${cell.room || ''}`);
           }
         }
         doc.moveDown(0.25);
@@ -1627,6 +1638,7 @@ function teacherScheduleFromPayload(payload) {
   const rows = [];
   for (const [className, weeks] of Object.entries(payload.classes || {})) {
     const shift = payload.classMeta?.[className]?.shift || 'morning';
+    const level = payload.classMeta?.[className]?.level;
     for (const [week, grid] of Object.entries(weeks)) {
       for (const day of payload.days || []) {
         for (const period of payload.periods || []) {
@@ -1639,7 +1651,7 @@ function teacherScheduleFromPayload(payload) {
             week: weekLabel(week),
             day: day.name,
             period: period.number,
-            time: periodTime(payload, shift, period.number),
+            time: periodTime(payload, level, shift, period.number),
             subject: cell.subject,
             room: cell.room || ''
           });
