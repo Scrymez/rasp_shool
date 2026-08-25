@@ -584,9 +584,36 @@ output {
 
 .availability-grid {
   display: grid;
-  grid-template-columns: minmax(120px, 0.7fr) minmax(150px, 0.6fr) minmax(200px, 1fr) minmax(200px, 1fr);
+  grid-template-columns: minmax(110px, 0.6fr) minmax(120px, 0.5fr) minmax(190px, 0.95fr) minmax(190px, 0.95fr) minmax(180px, 0.9fr);
   gap: 10px 12px;
   align-items: center;
+}
+
+.window-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.window-chips.disabled { opacity: 0.4; pointer-events: none; }
+
+.win-chip {
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(17, 19, 29, 0.55);
+  color: var(--paper);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.win-chip.active {
+  background: var(--gold);
+  color: #17131d;
+  border-color: var(--gold);
+  font-weight: 600;
 }
 
 .availability-grid > b {

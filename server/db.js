@@ -138,6 +138,7 @@ export function migrate() {
   `);
   ensureColumn('assignments', 'room_id', 'INTEGER');
   ensureColumn('assignments', 'paired', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('teacher_availability', 'windows', "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn('subjects', 'allowed_grades', "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn('subjects', 'unlocked', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('classes', 'shift', "TEXT NOT NULL DEFAULT 'morning'");
@@ -420,10 +421,19 @@ export function allTeacherConstraints() {
   `).all();
 }
 
+function parseWindows(value) {
+  try {
+    const arr = JSON.parse(value || '[]');
+    return Array.isArray(arr) ? arr.map(Number).filter((n) => n > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function allTeacherAvailability() {
   return db.prepare(`
     SELECT id, teacher_id AS teacherId, day_id AS dayId, day_off AS dayOff,
-           from_period AS fromPeriod, to_period AS toPeriod
+           from_period AS fromPeriod, to_period AS toPeriod, windows
     FROM teacher_availability
   `).all().map((row) => ({
     id: row.id,
@@ -431,7 +441,8 @@ export function allTeacherAvailability() {
     dayId: row.dayId,
     dayOff: Boolean(row.dayOff),
     fromPeriod: row.fromPeriod == null ? null : Number(row.fromPeriod),
-    toPeriod: row.toPeriod == null ? null : Number(row.toPeriod)
+    toPeriod: row.toPeriod == null ? null : Number(row.toPeriod),
+    windows: parseWindows(row.windows)
   }));
 }
 

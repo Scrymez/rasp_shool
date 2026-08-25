@@ -435,6 +435,7 @@ function isOutsideAvailability(settings, teacherId, dayId, periodNumber) {
   if (window.dayOff) return true;
   if (window.fromPeriod != null && periodNumber < window.fromPeriod) return true;
   if (window.toPeriod != null && periodNumber > window.toPeriod) return true;
+  if (Array.isArray(window.windows) && window.windows.includes(periodNumber)) return true;
   return false;
 }
 

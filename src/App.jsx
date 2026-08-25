@@ -1089,7 +1089,14 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
   const uniqueTeachers = useMemo(() => uniqueTeachersByName(state.teachers), [state.teachers]);
   const [availTeacherId, setAvailTeacherId] = useState(uniqueTeachers[0]?.id || '');
   const days = useMemo(() => state.settings.days.filter((day) => day.enabled), [state.settings.days]);
-  const periods = useMemo(() => [...state.settings.periods].sort((a, b) => a.number - b.number), [state.settings.periods]);
+  const maxLessons = useMemo(() => {
+    const tt = state.settings.timetables || {};
+    let m = 0;
+    for (const lv of Object.keys(tt)) for (const sh of Object.keys(tt[lv] || {})) m = Math.max(m, (tt[lv][sh]?.periods || []).length);
+    return m || (state.settings.periods?.length || 7);
+  }, [state.settings]);
+  const lessonNumbers = useMemo(() => Array.from({ length: maxLessons }, (_, i) => i + 1), [maxLessons]);
+  const periods = useMemo(() => lessonNumbers.map((n) => ({ number: n })), [lessonNumbers]);
 
   useEffect(() => setBlocks(state.scheduleBlocks || []), [state.scheduleBlocks]);
   useEffect(() => setAvailability(state.teacherAvailability || []), [state.teacherAvailability]);
@@ -1105,7 +1112,7 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
       }),
       api('/teacher-availability', {
         method: 'POST',
-        body: { availability: availability.map((row) => ({ teacherId: Number(row.teacherId), dayId: row.dayId, dayOff: !!row.dayOff, fromPeriod: row.fromPeriod ?? null, toPeriod: row.toPeriod ?? null })) }
+        body: { availability: availability.map((row) => ({ teacherId: Number(row.teacherId), dayId: row.dayId, dayOff: !!row.dayOff, fromPeriod: row.fromPeriod ?? null, toPeriod: row.toPeriod ?? null, windows: row.windows || [] })) }
       })
     ]);
     await refresh();
@@ -1117,16 +1124,22 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
   }, [blocks, availability]);
 
   function windowFor(dayId) {
-    return availability.find((item) => item.teacherId === availTeacherId && item.dayId === dayId) || { dayOff: false, fromPeriod: null, toPeriod: null };
+    return availability.find((item) => item.teacherId === availTeacherId && item.dayId === dayId) || { dayOff: false, fromPeriod: null, toPeriod: null, windows: [] };
   }
   function setWindow(dayId, patch) {
     setAvailability((prev) => {
       const others = prev.filter((item) => !(item.teacherId === availTeacherId && item.dayId === dayId));
-      const current = prev.find((item) => item.teacherId === availTeacherId && item.dayId === dayId) || { teacherId: availTeacherId, dayId, dayOff: false, fromPeriod: null, toPeriod: null };
+      const current = prev.find((item) => item.teacherId === availTeacherId && item.dayId === dayId) || { teacherId: availTeacherId, dayId, dayOff: false, fromPeriod: null, toPeriod: null, windows: [] };
       const next = { ...current, ...patch };
-      const empty = !next.dayOff && next.fromPeriod == null && next.toPeriod == null;
+      const empty = !next.dayOff && next.fromPeriod == null && next.toPeriod == null && !(next.windows || []).length;
       return empty ? others : [...others, next];
     });
+  }
+  function toggleWindow(dayId, lesson) {
+    const current = windowFor(dayId);
+    const set = new Set(current.windows || []);
+    if (set.has(lesson)) set.delete(lesson); else set.add(lesson);
+    setWindow(dayId, { windows: [...set].sort((a, b) => a - b) });
   }
   const timeOf = (n) => periodTime(state.settings, null, 'morning', n);
 
@@ -1142,6 +1155,7 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
     const parts = [];
     if (item.fromPeriod != null) parts.push(`с ${item.fromPeriod} урока`);
     if (item.toPeriod != null) parts.push(`до ${item.toPeriod} урока включительно`);
+    if (item.windows?.length) parts.push(`окна: ${item.windows.join(', ')} урок`);
     return parts.length ? parts.join(', ') : 'весь день';
   }
 
@@ -1179,7 +1193,7 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
 
       <div className="panel wide-panel">
         <PanelTitle icon={CalendarDays} title="Доступность учителей" />
-        <p className="hint">Выберите учителя и задайте на каждый день окно работы: с какого урока приходит и после какого уходит. Оба поля необязательны — «любой урок» = без ограничения. Генератор не поставит уроки вне окна. «Выходной» — весь день свободен.</p>
+        <p className="hint">Выберите учителя и задайте на каждый день окно работы: с какого урока приходит и после какого уходит (необязательно). «Выходной» — весь день свободен. «Окна» — отметьте уроки, на которые генератор НЕ поставит урок (например, пришёл на 1, ушёл на 8, но 3 урок — окно).</p>
         {uniqueTeachers.length ? (
           <>
             <div className="filter-bar">
@@ -1187,15 +1201,16 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
               <TeacherPicker value={availTeacherId} teachers={uniqueTeachers} allowEmpty={false} onChange={(id) => { if (id) setAvailTeacherId(id); }} />
             </div>
             <div className="availability-grid">
-              <b>День</b><b>Режим</b><b>Приходит</b><b>Уходит</b>
+              <b>День</b><b>Режим</b><b>Приходит</b><b>Уходит</b><b>Окна (нет урока)</b>
               {days.map((day) => {
                 const w = windowFor(day.id);
                 const off = !!w.dayOff;
+                const wins = w.windows || [];
                 return (
                   <React.Fragment key={day.id}>
                     <span className="day-name">{day.name}</span>
                     <label className="off-toggle">
-                      <input type="checkbox" checked={off} onChange={(e) => setWindow(day.id, e.target.checked ? { dayOff: true, fromPeriod: null, toPeriod: null } : { dayOff: false })} />
+                      <input type="checkbox" checked={off} onChange={(e) => setWindow(day.id, e.target.checked ? { dayOff: true, fromPeriod: null, toPeriod: null, windows: [] } : { dayOff: false })} />
                       выходной
                     </label>
                     <div className={`availability-cell ${off ? 'disabled' : ''}`}>
@@ -1211,6 +1226,18 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
                         {periods.map((p) => <option value={p.number} key={p.number}>после {p.number} урока · {timeOf(p.number)}</option>)}
                       </select>
                       <small>позже этого урока не поставим</small>
+                    </div>
+                    <div className={`window-chips ${off ? 'disabled' : ''}`}>
+                      {lessonNumbers.map((n) => (
+                        <button
+                          type="button"
+                          key={n}
+                          className={wins.includes(n) ? 'win-chip active' : 'win-chip'}
+                          disabled={off}
+                          title={wins.includes(n) ? `Убрать окно на ${n} уроке` : `Окно на ${n} уроке`}
+                          onClick={() => toggleWindow(day.id, n)}
+                        >{n}</button>
+                      ))}
                     </div>
                   </React.Fragment>
                 );

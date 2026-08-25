@@ -486,16 +486,18 @@ app.post('/api/teacher-availability', (req, res) => {
     dayId: z.string().min(1),
     dayOff: z.union([z.boolean(), z.number()]).optional(),
     fromPeriod: z.number().int().min(1).nullable().optional(),
-    toPeriod: z.number().int().min(1).nullable().optional()
+    toPeriod: z.number().int().min(1).nullable().optional(),
+    windows: z.array(z.number().int().min(1)).optional()
   })).parse(req.body.availability || []);
   db.exec('DELETE FROM teacher_availability');
-  const stmt = db.prepare('INSERT OR REPLACE INTO teacher_availability (teacher_id, day_id, day_off, from_period, to_period) VALUES (?, ?, ?, ?, ?)');
+  const stmt = db.prepare('INSERT OR REPLACE INTO teacher_availability (teacher_id, day_id, day_off, from_period, to_period, windows) VALUES (?, ?, ?, ?, ?, ?)');
   runTransaction(() => rows.forEach((row) => {
     const dayOff = row.dayOff ? 1 : 0;
     const from = dayOff ? null : (row.fromPeriod ?? null);
     const to = dayOff ? null : (row.toPeriod ?? null);
-    if (!dayOff && from == null && to == null) return; // no restriction, skip
-    stmt.run(row.teacherId, row.dayId, dayOff, from, to);
+    const windows = dayOff ? [] : [...new Set((row.windows || []).map(Number).filter((n) => n > 0))];
+    if (!dayOff && from == null && to == null && !windows.length) return; // no restriction, skip
+    stmt.run(row.teacherId, row.dayId, dayOff, from, to, JSON.stringify(windows));
   }));
   audit('replace', 'teacher-availability', { count: rows.length });
   res.json({ teacherAvailability: allTeacherAvailability() });
@@ -1728,7 +1730,7 @@ function restoreBackup(backup) {
     insertRows('class_advisor_assignments', backup.classAdvisorAssignments || [], ['id', 'class_id', 'teacher_id', 'room_id', 'shift', 'note']);
     insertRows('assignments', backup.assignments || [], ['id', 'class_id', 'subject_id', 'teacher_id', 'room_id', 'weekly_hours', 'paired']);
     insertRows('teacher_constraints', backup.teacherConstraints || [], ['id', 'teacher_id', 'day_id', 'shift', 'period_number', 'kind']);
-    insertRows('teacher_availability', backup.teacherAvailability || [], ['id', 'teacher_id', 'day_id', 'day_off', 'from_period', 'to_period']);
+    insertRows('teacher_availability', (backup.teacherAvailability || []).map((row) => ({ ...row, windows: row.windows ?? '[]' })), ['id', 'teacher_id', 'day_id', 'day_off', 'from_period', 'to_period', 'windows']);
     insertRows('schedule_blocks', backup.scheduleBlocks || [], ['id', 'day_id', 'shift', 'class_id', 'period_number', 'reason']);
     insertRows('settings', backup.settings || [], ['key', 'value']);
     insertRows('schedules', backup.schedules || [], ['id', 'title', 'week_mode', 'created_at', 'payload']);
