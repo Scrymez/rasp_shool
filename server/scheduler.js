@@ -76,6 +76,10 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
 
   const maxP = periods.length;
   const priority = teacherPriorityMap(settings, assignments, selected, days, maxP);
+  payload.teacherOverload = Object.values(priority.stats)
+    .filter((s) => s.load > s.capacity)
+    .map((s) => ({ teacher: s.name, lessons: s.load, slots: s.capacity, deficit: s.load - s.capacity }))
+    .sort((a, b) => b.deficit - a.deficit);
 
   for (const variant of variants) {
     // Build one global list of all lessons across classes, then order so that the
@@ -98,34 +102,37 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
       return (b.lesson.difficulty || 0) - (a.lesson.difficulty || 0);
     });
 
+    const unplaced = [];
     for (const { lesson, ctx } of queue) {
       const { schoolClass, key, shift, classPeriods } = ctx;
       const grid = payload.classes[key][variant];
       const slot = bestSlot({ grid, days, periods: classPeriods, lesson, busy, settings, schoolClass, shift, variant, strategy });
-      if (!slot) {
-        const reason = diagnoseFailure({ grid, days, periods: classPeriods, lesson, busy, settings, schoolClass, shift, variant });
-        payload.diagnostics.push({
-          level: 'warning',
-          className: key,
-          week: variant,
-          subject: lesson.subjectName,
-          teacher: lesson.teacherName || 'Не назначен',
-          reasonCode: reason.code,
-          reason: reason.text,
-          message: `Не удалось поставить ${lesson.subjectName} — ${reason.text}`
-        });
-        continue;
-      }
-      grid[slot.day.id][slot.period.number] = {
+      if (!slot) { unplaced.push({ lesson, ctx }); continue; }
+      grid[slot.day.id][slot.period.number] = lessonToCell(lesson);
+      reserveResource({ busy, settings, variant, level: schoolClass.level, shift, dayId: slot.day.id, period: slot.period, lesson });
+    }
+
+    // Repair pass: for lessons of constrained teachers that couldn't fit, try to relocate
+    // a flexible teacher's lesson into an empty cell to free a slot the constrained teacher can use.
+    for (const item of unplaced) {
+      if (tryRelocateToFit(payload, item, { busy, settings, days, variant })) { item.placed = true; }
+    }
+
+    for (const { lesson, ctx, placed } of unplaced) {
+      if (placed) continue;
+      const { schoolClass, key, shift, classPeriods } = ctx;
+      const grid = payload.classes[key][variant];
+      const reason = diagnoseFailure({ grid, days, periods: classPeriods, lesson, busy, settings, schoolClass, shift, variant });
+      payload.diagnostics.push({
+        level: 'warning',
+        className: key,
+        week: variant,
         subject: lesson.subjectName,
         teacher: lesson.teacherName || 'Не назначен',
-        teacherId: lesson.teacherId || null,
-        room: lesson.roomName || '',
-        roomId: lesson.roomId || null,
-        difficulty: lesson.difficulty,
-        paired: lesson.paired ? 1 : 0
-      };
-      reserveResource({ busy, settings, variant, level: schoolClass.level, shift, dayId: slot.day.id, period: slot.period, lesson });
+        reasonCode: reason.code,
+        reason: reason.text,
+        message: `Не удалось поставить ${lesson.subjectName} — ${reason.text}`
+      });
     }
   }
 
@@ -140,10 +147,10 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
   return payload;
 }
 
-// How many day×period slots a teacher is actually available across the week (approx, shift-agnostic).
-function teacherAvailableSlots(settings, teacherId, days, maxP) {
+// Free day×period slots for a teacher in ONE shift (respects day-off, arrival/departure, per-shift windows).
+function slotsForShift(settings, teacherId, shift, days, maxP) {
   const rows = (settings.teacherAvailability || []).filter((a) => a.teacherId === teacherId);
-  if (!rows.length) return days.length * maxP; // unconstrained: fully available
+  if (!rows.length) return days.length * maxP;
   const byDay = new Map(rows.map((r) => [r.dayId, r]));
   let slots = 0;
   for (const day of days) {
@@ -152,7 +159,7 @@ function teacherAvailableSlots(settings, teacherId, days, maxP) {
     if (r.dayOff) continue;
     const from = r.fromPeriod || 1;
     const to = r.toPeriod || maxP;
-    const wins = new Set([...(r.windows?.morning || []), ...(r.windows?.afternoon || []), ...(Array.isArray(r.windows) ? r.windows : [])]);
+    const wins = new Set(Array.isArray(r.windows) ? r.windows : (r.windows?.[shift] || []));
     for (let n = 1; n <= maxP; n += 1) {
       if (n < from || n > to) continue;
       if (wins.has(n)) continue;
@@ -162,27 +169,97 @@ function teacherAvailableSlots(settings, teacherId, days, maxP) {
   return slots;
 }
 
+// Per-teacher load and available capacity across the shifts they actually teach.
+function computeTeacherStats(settings, assignments, selected, days, maxP) {
+  const selectedIds = new Set(selected.map((c) => c.id));
+  const stats = {};
+  for (const a of assignments) {
+    if (!a.teacherId || !selectedIds.has(a.classId)) continue;
+    const s = stats[a.teacherId] || { id: a.teacherId, name: a.teacherName || 'учитель', load: 0, shifts: new Set() };
+    s.load += Number(a.weeklyHours || 1);
+    s.shifts.add(a.shift || 'morning');
+    stats[a.teacherId] = s;
+  }
+  for (const s of Object.values(stats)) {
+    s.capacity = [...s.shifts].reduce((sum, sh) => sum + slotsForShift(settings, s.id, sh, days, maxP), 0);
+  }
+  return stats;
+}
+
 // Teachers with tighter availability (more lessons vs fewer free slots) should be placed first.
 function teacherPriorityMap(settings, assignments, selected, days, maxP) {
-  const selectedIds = new Set(selected.map((c) => c.id));
-  const load = {};
-  for (const a of assignments) {
-    if (a.teacherId && selectedIds.has(a.classId)) load[a.teacherId] = (load[a.teacherId] || 0) + Number(a.weeklyHours || 1);
-  }
+  const stats = computeTeacherStats(settings, assignments, selected, days, maxP);
   const constrained = new Set((settings.teacherAvailability || []).map((a) => a.teacherId));
   const tightness = {};
-  for (const tid of Object.keys(load)) {
-    const id = Number(tid);
-    const slots = teacherAvailableSlots(settings, id, days, maxP);
-    tightness[id] = load[id] / Math.max(1, slots);
-  }
-  return { constrained, tightness };
+  for (const s of Object.values(stats)) tightness[s.id] = s.load / Math.max(1, s.capacity);
+  return { constrained, tightness, stats };
 }
 
 function lessonPlacementRank(lesson, priority) {
   if (!lesson.teacherId) return { bucket: 2, tightness: 0 };
   if (priority.constrained.has(lesson.teacherId)) return { bucket: 0, tightness: priority.tightness[lesson.teacherId] || 0 };
   return { bucket: 1, tightness: priority.tightness[lesson.teacherId] || 0 };
+}
+
+function lessonToCell(lesson) {
+  return {
+    subject: lesson.subjectName,
+    teacher: lesson.teacherName || 'Не назначен',
+    teacherId: lesson.teacherId || null,
+    room: lesson.roomName || '',
+    roomId: lesson.roomId || null,
+    difficulty: lesson.difficulty,
+    paired: lesson.paired ? 1 : 0
+  };
+}
+
+function cellToLesson(cell) {
+  return {
+    subjectName: cell.subject,
+    teacherName: cell.teacher,
+    teacherId: cell.teacherId || null,
+    roomName: cell.room,
+    roomId: cell.roomId || null,
+    difficulty: cell.difficulty,
+    paired: cell.paired
+  };
+}
+
+// Move a flexible lesson out of a slot the stuck lesson could use, into a free cell on another day.
+function tryRelocateToFit(payload, { lesson: L, ctx }, { busy, settings, days, variant }) {
+  const { schoolClass, shift, classPeriods, key } = ctx;
+  const level = schoolClass.level;
+  const grid = payload.classes[key][variant];
+  for (const day of days) {
+    for (const period of classPeriods) {
+      const cellM = grid[day.id]?.[period.number];
+      if (!cellM) continue;
+      if (cellM.teacherId && cellM.teacherId === L.teacherId) continue; // same teacher — swap won't help
+      const mLesson = cellToLesson(cellM);
+      // tentatively free this slot
+      grid[day.id][period.number] = null;
+      releaseResource({ busy, settings, variant, level, shift, dayId: day.id, period, lesson: mLesson });
+      const lFits = !hardBlockReason({ grid, day, period, lesson: L, busy, settings, schoolClass, shift, variant });
+      if (lFits) {
+        for (const d2 of days) {
+          if (d2.id === day.id) continue; // relocate to another day to keep day capacity valid
+          for (const p2 of classPeriods) {
+            if (grid[d2.id]?.[p2.number]) continue;
+            if (hardBlockReason({ grid, day: d2, period: p2, lesson: mLesson, busy, settings, schoolClass, shift, variant })) continue;
+            grid[d2.id][p2.number] = cellM;
+            reserveResource({ busy, settings, variant, level, shift, dayId: d2.id, period: p2, lesson: mLesson });
+            grid[day.id][period.number] = lessonToCell(L);
+            reserveResource({ busy, settings, variant, level, shift, dayId: day.id, period, lesson: L });
+            return true;
+          }
+        }
+      }
+      // restore
+      grid[day.id][period.number] = cellM;
+      reserveResource({ busy, settings, variant, level, shift, dayId: day.id, period, lesson: mLesson });
+    }
+  }
+  return false;
 }
 
 function lessonsForClass(assignments, classId, strategy, variant = 'single', weekMode = 'one') {
@@ -348,6 +425,19 @@ function reserveResource({ busy, settings, variant, level, shift, dayId, period,
   const interval = periodInterval(settings, level, shift, period.number);
   if (lesson.teacherId) addBusy(busy.teachers, variant, lesson.teacherId, dayId, interval);
   if (lesson.roomId) addBusy(busy.rooms, variant, lesson.roomId, dayId, interval);
+}
+
+function releaseResource({ busy, settings, variant, level, shift, dayId, period, lesson }) {
+  const interval = periodInterval(settings, level, shift, period.number);
+  if (lesson.teacherId) removeBusy(busy.teachers, variant, lesson.teacherId, dayId, interval);
+  if (lesson.roomId) removeBusy(busy.rooms, variant, lesson.roomId, dayId, interval);
+}
+
+function removeBusy(store, variant, resourceId, dayId, interval) {
+  const key = resourceBusyKey(variant, resourceId, dayId);
+  const entries = store.get(key) || [];
+  const i = entries.findIndex((e) => e.start === interval.start && e.end === interval.end);
+  if (i >= 0) { entries.splice(i, 1); store.set(key, entries); }
 }
 
 function resourceBusy(store, settings, variant, level, shift, resourceId, dayId, period) {
