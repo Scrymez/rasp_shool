@@ -417,6 +417,12 @@ function violatesHardRules(args) {
 // Returns a reason code for why this slot can't take the lesson, or null if it can.
 function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClass, shift, variant }) {
   if (grid[day.id]?.[period.number]) return 'occupied';
+  // Same subject: never more than 2 per day; non-paired subjects can't be placed back-to-back.
+  const sameSubjectPeriods = Object.entries(grid[day.id] || {})
+    .filter(([, cell]) => cell?.subject === lesson.subjectName)
+    .map(([number]) => Number(number));
+  if (sameSubjectPeriods.length >= 2) return 'subject-daily-limit';
+  if (!lesson.paired && sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-consecutive';
   if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return 'school-block';
   if (isTeacherUnavailable(settings, lesson.teacherId, day.id, period.number, shift)) return 'teacher-off';
   if (isOutsideAvailability(settings, lesson.teacherId, day.id, period.number, shift)) return 'teacher-window';
@@ -429,6 +435,8 @@ function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClas
 
 const REASON_TEXT = {
   'occupied': 'нет свободных уроков в сетке класса (все слоты заняты)',
+  'subject-daily-limit': 'предмет уже стоит 2 раза в этот день (больше нельзя)',
+  'subject-consecutive': 'этот предмет нельзя ставить подряд в один день (спаренно можно только отмеченным «Подряд»)',
   'school-block': 'подходящие слоты заблокированы (блокировка уроков школы)',
   'teacher-off': 'учитель недоступен: выходной или приход/уход не покрывают слот',
   'teacher-window': 'слот попал в «окно» учителя',
@@ -448,7 +456,7 @@ function diagnoseFailure({ grid, days, periods, lesson, busy, settings, schoolCl
     }
   }
   // Prefer the most informative reason over generic "occupied" when both exist.
-  const order = ['teacher-busy', 'teacher-off', 'teacher-window', 'room-busy', 'difficulty', 'day-full', 'school-block', 'occupied'];
+  const order = ['teacher-busy', 'teacher-off', 'teacher-window', 'room-busy', 'difficulty', 'day-full', 'subject-daily-limit', 'subject-consecutive', 'school-block', 'occupied'];
   let best = null;
   for (const code of order) if (tally[code] && (!best || tally[code] > tally[best])) best = code;
   // if a specific (non-occupied) reason blocks at least a quarter of slots, prefer it
