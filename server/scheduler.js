@@ -62,6 +62,8 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
   });
   if (strategy.reverse) classOrder.reverse();
 
+  // Prepare grids + per-class context.
+  const ctxByKey = {};
   for (const schoolClass of classOrder) {
     const key = classKey(schoolClass);
     const shift = schoolClass.shift || 'morning';
@@ -69,48 +71,61 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
     payload.classMeta[key] = { shift, level: schoolClass.level };
     payload.classes[key] = {};
     for (const variant of variants) payload.classes[key][variant] = emptyGrid(days, periods);
+    ctxByKey[key] = { schoolClass, key, shift, classPeriods };
+  }
 
-    for (const variant of variants) {
-      const classLessons = lessonsForClass(assignments, schoolClass.id, strategy, variant, weekMode);
-      for (const lesson of classLessons) {
-        const slot = bestSlot({
-          grid: payload.classes[key][variant],
-          days,
-          periods: classPeriods,
-          lesson,
-          busy,
-          settings,
-          schoolClass,
-          shift,
-          variant,
-          strategy
-        });
-        if (!slot) {
-          const reason = diagnoseFailure({ grid: payload.classes[key][variant], days, periods: classPeriods, lesson, busy, settings, schoolClass, shift, variant });
-          payload.diagnostics.push({
-            level: 'warning',
-            className: key,
-            week: variant,
-            subject: lesson.subjectName,
-            teacher: lesson.teacherName || 'Не назначен',
-            reasonCode: reason.code,
-            reason: reason.text,
-            message: `Не удалось поставить ${lesson.subjectName} — ${reason.text}`
-          });
-          continue;
-        }
-        const cell = {
+  const maxP = periods.length;
+  const priority = teacherPriorityMap(settings, assignments, selected, days, maxP);
+
+  for (const variant of variants) {
+    // Build one global list of all lessons across classes, then order so that the
+    // most constrained teachers (day-offs/windows/tight availability) place first.
+    const queue = [];
+    for (const schoolClass of classOrder) {
+      const ctx = ctxByKey[classKey(schoolClass)];
+      for (const lesson of lessonsForClass(assignments, schoolClass.id, strategy, variant, weekMode)) {
+        queue.push({ lesson, ctx });
+      }
+    }
+    queue.sort((a, b) => {
+      const pa = lessonPlacementRank(a.lesson, priority);
+      const pb = lessonPlacementRank(b.lesson, priority);
+      if (pa.bucket !== pb.bucket) return pa.bucket - pb.bucket;
+      if (pa.tightness !== pb.tightness) return pb.tightness - pa.tightness;
+      const wa = lessonConstraintWeight(a.lesson);
+      const wb = lessonConstraintWeight(b.lesson);
+      if (wb !== wa) return wb - wa;
+      return (b.lesson.difficulty || 0) - (a.lesson.difficulty || 0);
+    });
+
+    for (const { lesson, ctx } of queue) {
+      const { schoolClass, key, shift, classPeriods } = ctx;
+      const grid = payload.classes[key][variant];
+      const slot = bestSlot({ grid, days, periods: classPeriods, lesson, busy, settings, schoolClass, shift, variant, strategy });
+      if (!slot) {
+        const reason = diagnoseFailure({ grid, days, periods: classPeriods, lesson, busy, settings, schoolClass, shift, variant });
+        payload.diagnostics.push({
+          level: 'warning',
+          className: key,
+          week: variant,
           subject: lesson.subjectName,
           teacher: lesson.teacherName || 'Не назначен',
-          teacherId: lesson.teacherId || null,
-          room: lesson.roomName || '',
-          roomId: lesson.roomId || null,
-          difficulty: lesson.difficulty,
-          paired: lesson.paired ? 1 : 0
-        };
-        payload.classes[key][variant][slot.day.id][slot.period.number] = cell;
-        reserveResource({ busy, settings, variant, level: schoolClass.level, shift, dayId: slot.day.id, period: slot.period, lesson });
+          reasonCode: reason.code,
+          reason: reason.text,
+          message: `Не удалось поставить ${lesson.subjectName} — ${reason.text}`
+        });
+        continue;
       }
+      grid[slot.day.id][slot.period.number] = {
+        subject: lesson.subjectName,
+        teacher: lesson.teacherName || 'Не назначен',
+        teacherId: lesson.teacherId || null,
+        room: lesson.roomName || '',
+        roomId: lesson.roomId || null,
+        difficulty: lesson.difficulty,
+        paired: lesson.paired ? 1 : 0
+      };
+      reserveResource({ busy, settings, variant, level: schoolClass.level, shift, dayId: slot.day.id, period: slot.period, lesson });
     }
   }
 
@@ -123,6 +138,51 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
     difficultyImbalance: totalDifficultyImbalance(payload)
   };
   return payload;
+}
+
+// How many day×period slots a teacher is actually available across the week (approx, shift-agnostic).
+function teacherAvailableSlots(settings, teacherId, days, maxP) {
+  const rows = (settings.teacherAvailability || []).filter((a) => a.teacherId === teacherId);
+  if (!rows.length) return days.length * maxP; // unconstrained: fully available
+  const byDay = new Map(rows.map((r) => [r.dayId, r]));
+  let slots = 0;
+  for (const day of days) {
+    const r = byDay.get(day.id);
+    if (!r) { slots += maxP; continue; }
+    if (r.dayOff) continue;
+    const from = r.fromPeriod || 1;
+    const to = r.toPeriod || maxP;
+    const wins = new Set([...(r.windows?.morning || []), ...(r.windows?.afternoon || []), ...(Array.isArray(r.windows) ? r.windows : [])]);
+    for (let n = 1; n <= maxP; n += 1) {
+      if (n < from || n > to) continue;
+      if (wins.has(n)) continue;
+      slots += 1;
+    }
+  }
+  return slots;
+}
+
+// Teachers with tighter availability (more lessons vs fewer free slots) should be placed first.
+function teacherPriorityMap(settings, assignments, selected, days, maxP) {
+  const selectedIds = new Set(selected.map((c) => c.id));
+  const load = {};
+  for (const a of assignments) {
+    if (a.teacherId && selectedIds.has(a.classId)) load[a.teacherId] = (load[a.teacherId] || 0) + Number(a.weeklyHours || 1);
+  }
+  const constrained = new Set((settings.teacherAvailability || []).map((a) => a.teacherId));
+  const tightness = {};
+  for (const tid of Object.keys(load)) {
+    const id = Number(tid);
+    const slots = teacherAvailableSlots(settings, id, days, maxP);
+    tightness[id] = load[id] / Math.max(1, slots);
+  }
+  return { constrained, tightness };
+}
+
+function lessonPlacementRank(lesson, priority) {
+  if (!lesson.teacherId) return { bucket: 2, tightness: 0 };
+  if (priority.constrained.has(lesson.teacherId)) return { bucket: 0, tightness: priority.tightness[lesson.teacherId] || 0 };
+  return { bucket: 1, tightness: priority.tightness[lesson.teacherId] || 0 };
 }
 
 function lessonsForClass(assignments, classId, strategy, variant = 'single', weekMode = 'one') {
