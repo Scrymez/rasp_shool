@@ -1088,6 +1088,10 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
   const [availability, setAvailability] = useState(state.teacherAvailability || []);
   const uniqueTeachers = useMemo(() => uniqueTeachersByName(state.teachers), [state.teachers]);
   const [availTeacherId, setAvailTeacherId] = useState(uniqueTeachers[0]?.id || '');
+  const blocksRef = useRef(null);
+  const availRef = useRef(null);
+  function editBlock() { blocksRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  function editAvailability(item) { setAvailTeacherId(Number(item.teacherId)); availRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   const days = useMemo(() => state.settings.days.filter((day) => day.enabled), [state.settings.days]);
   const maxByShift = useMemo(() => {
     const cfg = state.settings.maxLessonsByShift || {};
@@ -1176,7 +1180,7 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
 
   return (
     <section className="constraints-layout">
-      <div className="panel wide-panel">
+      <div className="panel wide-panel" ref={blocksRef}>
         <div className="segmented">
           <button className="export-link" onClick={async () => { await downloadFile('/export/constraints.xlsx'); setNotice('Ограничения выгружены в Excel'); }}><FileSpreadsheet size={18} /> Скачать все ограничения (Excel)</button>
         </div>
@@ -1209,7 +1213,7 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
         ))}
       </div>
 
-      <div className="panel wide-panel">
+      <div className="panel wide-panel" ref={availRef}>
         <PanelTitle icon={CalendarDays} title="Доступность учителей" />
         <p className="hint">Выберите учителя и задайте на каждый день окно работы: с какого урока приходит и после какого уходит (необязательно). «Выходной» — весь день свободен. «Окна» — отметьте уроки, на которые генератор НЕ поставит урок (например, пришёл на 1, ушёл на 8, но 3 урок — окно).</p>
         {uniqueTeachers.length ? (
@@ -1285,7 +1289,10 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
             return (
               <p className="action-line" key={`block-${index}`}>
                 <span>Школа · {blockLabel(item)} · {day?.name || item.dayId} · {item.shift ? shiftName(state, item.shift) : 'обе смены'} · {item.periodNumber} урок · {item.reason || 'блокировка'}</span>
-                <button onClick={() => setBlocks(blocks.filter((_, rowIndex) => rowIndex !== index))} title="Удалить блокировку"><Trash2 size={16} /></button>
+                <span className="line-actions">
+                  <button onClick={editBlock} title="Редактировать блокировку"><Pencil size={16} /></button>
+                  <button onClick={() => setBlocks(blocks.filter((_, rowIndex) => rowIndex !== index))} title="Удалить блокировку"><Trash2 size={16} /></button>
+                </span>
               </p>
             );
           })}
@@ -1295,7 +1302,10 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
             return (
               <p className="action-line" key={`avail-${index}`}>
                 <span>{teacher?.fullName || 'Учитель'} · {day?.name || item.dayId} · {windowText(item)}</span>
-                <button onClick={() => setAvailability(availability.filter((_, rowIndex) => rowIndex !== index))} title="Удалить окно"><Trash2 size={16} /></button>
+                <span className="line-actions">
+                  <button onClick={() => editAvailability(item)} title="Редактировать (открыть учителя в редакторе)"><Pencil size={16} /></button>
+                  <button onClick={() => setAvailability(availability.filter((_, rowIndex) => rowIndex !== index))} title="Удалить окно"><Trash2 size={16} /></button>
+                </span>
               </p>
             );
           })}
