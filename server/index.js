@@ -738,6 +738,13 @@ function scheduleLogText(row) {
   if (!diags.length) {
     L.push('Ошибок нет — все уроки расставлены.');
   } else {
+    // Summary by cause.
+    const byReason = {};
+    for (const d of diags) { const r = d.reason || 'причина не определена'; byReason[r] = (byReason[r] || 0) + 1; }
+    L.push('Причины (сколько уроков затронуто):');
+    for (const [reason, n] of Object.entries(byReason).sort((a, b) => b[1] - a[1])) L.push(`   ${n}× — ${reason}`);
+    L.push('');
+    L.push('Подробно по классам:');
     const byClass = {};
     for (const d of diags) {
       const key = d.className || 'общее';
@@ -745,8 +752,21 @@ function scheduleLogText(row) {
     }
     for (const [cls, items] of Object.entries(byClass).sort()) {
       L.push(`Класс ${cls}: не удалось поставить ${items.length}`);
-      for (const d of items) L.push(`   • ${d.week && d.week !== 'single' ? `[${weekLabel(d.week)}] ` : ''}${d.message}`);
+      for (const d of items) {
+        const wk = d.week && d.week !== 'single' ? `[${weekLabel(d.week)}] ` : '';
+        const teacher = d.teacher && d.teacher !== 'Не назначен' ? ` (учитель: ${d.teacher})` : ' (учитель не назначен)';
+        L.push(`   • ${wk}${d.subject || d.message}${teacher}`);
+        if (d.reason) L.push(`       причина: ${d.reason}`);
+      }
     }
+    L.push('');
+    L.push('ЧТО ПРОВЕРИТЬ:');
+    L.push('-'.repeat(50));
+    if (byReason['учитель уже ведёт урок в другом классе в это время']) L.push('   • Учитель перегружен: у одного учителя слишком много классов по предмету. Добавьте второго учителя или уменьшите часы.');
+    if (Object.keys(byReason).some((r) => r.includes('окно') || r.includes('выходной') || r.includes('приход/уход'))) L.push('   • Слишком жёсткие ограничения учителя (выходные/окна/приход-уход) — ослабьте их в разделе «Ограничения».');
+    if (byReason['кабинет занят другим классом в это время']) L.push('   • Не хватает кабинетов: закреплённый кабинет занят. Добавьте кабинеты или снимите жёсткую привязку.');
+    if (byReason['дни класса заполнены до лимита СанПиН (макс. уроков в день)']) L.push('   • Часов у класса больше, чем вмещает неделя: поднимите макс. уроков в день (СанПиН) или уменьшите часы предметов.');
+    if (byReason['превышен дневной лимит сложности по СанПиН']) L.push('   • Дневной лимит сложности слишком низкий — поднимите его в разделе «Время» → СанПиН.');
   }
 
   if (p.manualWarnings?.length) {

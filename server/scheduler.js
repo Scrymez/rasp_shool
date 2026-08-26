@@ -86,11 +86,16 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
           strategy
         });
         if (!slot) {
+          const reason = diagnoseFailure({ grid: payload.classes[key][variant], days, periods: classPeriods, lesson, busy, settings, schoolClass, shift, variant });
           payload.diagnostics.push({
             level: 'warning',
             className: key,
             week: variant,
-            message: `Не удалось поставить ${lesson.subjectName}`
+            subject: lesson.subjectName,
+            teacher: lesson.teacherName || 'Не назначен',
+            reasonCode: reason.code,
+            reason: reason.text,
+            message: `Не удалось поставить ${lesson.subjectName} — ${reason.text}`
           });
           continue;
         }
@@ -183,15 +188,52 @@ function bestSlot({ grid, days, periods, lesson, busy, settings, schoolClass, sh
   return candidates.sort((a, b) => a.score - b.score || a.period.number - b.period.number)[0] || null;
 }
 
-function violatesHardRules({ grid, day, period, lesson, busy, settings, schoolClass, shift, variant }) {
-  if (dayLoad(grid, day.id) >= maxLessons(settings, schoolClass.grade)) return true;
-  if (dayDifficulty(grid, day.id) + lesson.difficulty > maxDailyDifficulty(settings, schoolClass.grade)) return true;
-  if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return true;
-  if (isTeacherUnavailable(settings, lesson.teacherId, day.id, period.number, shift)) return true;
-  if (isOutsideAvailability(settings, lesson.teacherId, day.id, period.number, shift)) return true;
-  if (lesson.teacherId && resourceBusy(busy.teachers, settings, variant, schoolClass.level, shift, lesson.teacherId, day.id, period)) return true;
-  if (lesson.roomId && resourceBusy(busy.rooms, settings, variant, schoolClass.level, shift, lesson.roomId, day.id, period)) return true;
-  return false;
+function violatesHardRules(args) {
+  return hardBlockReason(args) != null;
+}
+
+// Returns a reason code for why this slot can't take the lesson, or null if it can.
+function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClass, shift, variant }) {
+  if (grid[day.id]?.[period.number]) return 'occupied';
+  if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return 'school-block';
+  if (isTeacherUnavailable(settings, lesson.teacherId, day.id, period.number, shift)) return 'teacher-off';
+  if (isOutsideAvailability(settings, lesson.teacherId, day.id, period.number, shift)) return 'teacher-window';
+  if (lesson.teacherId && resourceBusy(busy.teachers, settings, variant, schoolClass.level, shift, lesson.teacherId, day.id, period)) return 'teacher-busy';
+  if (lesson.roomId && resourceBusy(busy.rooms, settings, variant, schoolClass.level, shift, lesson.roomId, day.id, period)) return 'room-busy';
+  if (dayLoad(grid, day.id) >= maxLessons(settings, schoolClass.grade)) return 'day-full';
+  if (dayDifficulty(grid, day.id) + lesson.difficulty > maxDailyDifficulty(settings, schoolClass.grade)) return 'difficulty';
+  return null;
+}
+
+const REASON_TEXT = {
+  'occupied': 'нет свободных уроков в сетке класса (все слоты заняты)',
+  'school-block': 'подходящие слоты заблокированы (блокировка уроков школы)',
+  'teacher-off': 'учитель недоступен: выходной или приход/уход не покрывают слот',
+  'teacher-window': 'слот попал в «окно» учителя',
+  'teacher-busy': 'учитель уже ведёт урок в другом классе в это время',
+  'room-busy': 'кабинет занят другим классом в это время',
+  'day-full': 'дни класса заполнены до лимита СанПиН (макс. уроков в день)',
+  'difficulty': 'превышен дневной лимит сложности по СанПиН'
+};
+
+// When a lesson can't be placed, find the reason that blocked the most slots.
+function diagnoseFailure({ grid, days, periods, lesson, busy, settings, schoolClass, shift, variant }) {
+  const tally = {};
+  for (const day of days) {
+    for (const period of periods) {
+      const reason = hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClass, shift, variant });
+      if (reason) tally[reason] = (tally[reason] || 0) + 1;
+    }
+  }
+  // Prefer the most informative reason over generic "occupied" when both exist.
+  const order = ['teacher-busy', 'teacher-off', 'teacher-window', 'room-busy', 'difficulty', 'day-full', 'school-block', 'occupied'];
+  let best = null;
+  for (const code of order) if (tally[code] && (!best || tally[code] > tally[best])) best = code;
+  // if a specific (non-occupied) reason blocks at least a quarter of slots, prefer it
+  const specific = order.filter((c) => c !== 'occupied').find((c) => tally[c]);
+  const total = days.length * periods.length;
+  const chosen = (specific && (tally[specific] >= total * 0.25 || !tally['occupied'])) ? specific : (best || 'occupied');
+  return { code: chosen, text: REASON_TEXT[chosen] || 'причина не определена', tally };
 }
 
 function slotScore({ grid, days, day, period, periods, lesson, settings, schoolClass, shift, strategy }) {
