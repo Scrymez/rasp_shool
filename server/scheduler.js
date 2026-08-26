@@ -68,7 +68,7 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
     const key = classKey(schoolClass);
     const shift = schoolClass.shift || 'morning';
     const classPeriods = timetableFor(settings, schoolClass.level, shift).periods;
-    payload.classMeta[key] = { shift, level: schoolClass.level };
+    payload.classMeta[key] = { shift, level: schoolClass.level, id: schoolClass.id };
     payload.classes[key] = {};
     for (const variant of variants) payload.classes[key][variant] = emptyGrid(days, periods);
     ctxByKey[key] = { schoolClass, key, shift, classPeriods };
@@ -115,7 +115,8 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
     // Repair pass: for lessons of constrained teachers that couldn't fit, try to relocate
     // a flexible teacher's lesson into an empty cell to free a slot the constrained teacher can use.
     for (const item of unplaced) {
-      if (tryRelocateToFit(payload, item, { busy, settings, days, variant })) { item.placed = true; }
+      if (tryRelocateToFit(payload, item, { busy, settings, days, variant })) { item.placed = true; continue; }
+      if (tryCrossClassRelocate(payload, item, { busy, settings, days, variant })) { item.placed = true; }
     }
 
     for (const { lesson, ctx, placed } of unplaced) {
@@ -225,41 +226,125 @@ function cellToLesson(cell) {
   };
 }
 
-// Move a flexible lesson out of a slot the stuck lesson could use, into a free cell on another day.
+// Move a flexible lesson out of a slot the stuck lesson could use, into any free cell (same or other
+// day), then place the stuck lesson. Keeps per-day capacity valid.
 function tryRelocateToFit(payload, { lesson: L, ctx }, { busy, settings, days, variant }) {
   const { schoolClass, shift, classPeriods, key } = ctx;
   const level = schoolClass.level;
   const grid = payload.classes[key][variant];
+  const cap = maxLessons(settings, schoolClass.grade);
   for (const day of days) {
     for (const period of classPeriods) {
       const cellM = grid[day.id]?.[period.number];
       if (!cellM) continue;
       if (cellM.teacherId && cellM.teacherId === L.teacherId) continue; // same teacher — swap won't help
       const mLesson = cellToLesson(cellM);
-      // tentatively free this slot
       grid[day.id][period.number] = null;
       releaseResource({ busy, settings, variant, level, shift, dayId: day.id, period, lesson: mLesson });
       const lFits = !hardBlockReason({ grid, day, period, lesson: L, busy, settings, schoolClass, shift, variant });
       if (lFits) {
         for (const d2 of days) {
-          if (d2.id === day.id) continue; // relocate to another day to keep day capacity valid
           for (const p2 of classPeriods) {
             if (grid[d2.id]?.[p2.number]) continue;
+            if (d2.id === day.id && p2.number === period.number) continue;
             if (hardBlockReason({ grid, day: d2, period: p2, lesson: mLesson, busy, settings, schoolClass, shift, variant })) continue;
+            // tentative placement
             grid[d2.id][p2.number] = cellM;
             reserveResource({ busy, settings, variant, level, shift, dayId: d2.id, period: p2, lesson: mLesson });
             grid[day.id][period.number] = lessonToCell(L);
             reserveResource({ busy, settings, variant, level, shift, dayId: day.id, period, lesson: L });
-            return true;
+            if (dayLoad(grid, day.id) <= cap && dayLoad(grid, d2.id) <= cap) return true;
+            // revert tentative placement
+            grid[day.id][period.number] = null;
+            releaseResource({ busy, settings, variant, level, shift, dayId: day.id, period, lesson: L });
+            grid[d2.id][p2.number] = null;
+            releaseResource({ busy, settings, variant, level, shift, dayId: d2.id, period: p2, lesson: mLesson });
           }
         }
       }
-      // restore
+      // restore M
       grid[day.id][period.number] = cellM;
       reserveResource({ busy, settings, variant, level, shift, dayId: day.id, period, lesson: mLesson });
     }
   }
   return false;
+}
+
+// Cross-class repair: the stuck teacher T has an empty, allowed slot in class C, but is busy there
+// because T teaches another class C2 at that time. Move T's C2 lesson to a free slot, then place L in C.
+function tryCrossClassRelocate(payload, { lesson: L, ctx }, { busy, settings, days, variant }) {
+  const T = L.teacherId;
+  if (!T) return false;
+  const { schoolClass: C, shift, classPeriods, key } = ctx;
+  const level = C.level;
+  const gridC = payload.classes[key][variant];
+  const capC = maxLessons(settings, C.grade);
+  for (const day of days) {
+    for (const period of classPeriods) {
+      if (gridC[day.id]?.[period.number]) continue; // need an empty cell in C
+      // L must be placeable here except for T being busy elsewhere
+      if (isScheduleBlocked(settings, day.id, period.number, shift, C.id)) continue;
+      if (isTeacherUnavailable(settings, T, day.id, period.number, shift)) continue;
+      if (isOutsideAvailability(settings, T, day.id, period.number, shift)) continue;
+      if (dayLoad(gridC, day.id) >= capC) continue;
+      if (dayDifficulty(gridC, day.id) + (L.difficulty || 0) > maxDailyDifficulty(settings, C.grade)) continue;
+      const wantInterval = periodInterval(settings, level, shift, period.number);
+      // find C2 where T teaches at an overlapping time on this day
+      for (const key2 of Object.keys(payload.classes)) {
+        if (key2 === key) continue;
+        const meta2 = payload.classMeta[key2];
+        const grid2 = payload.classes[key2][variant];
+        if (!grid2) continue;
+        const periods2 = timetableFor(settings, meta2.level, meta2.shift).periods;
+        for (const p2 of periods2) {
+          const cell2 = grid2[day.id]?.[p2.number];
+          if (!cell2 || cell2.teacherId !== T) continue;
+          if (!intervalsOverlap(wantInterval, periodInterval(settings, meta2.level, meta2.shift, p2.number))) continue;
+          // relocate cell2 within C2 to a free slot where T is free
+          const m2 = cellToLesson(cell2);
+          const c2class = { level: meta2.level, grade: gradeFromKey(key2), id: null };
+          grid2[day.id][p2.number] = null;
+          releaseResource({ busy, settings, variant, level: meta2.level, shift: meta2.shift, dayId: day.id, period: p2, lesson: m2 });
+          let done = false;
+          for (const d3 of days) {
+            for (const q3 of periods2) {
+              if (grid2[d3.id]?.[q3.number]) continue;
+              if (d3.id === day.id && q3.number === p2.number) continue;
+              if (hardBlockReason({ grid: grid2, day: d3, period: q3, lesson: m2, busy, settings, schoolClass: { level: meta2.level, grade: c2class.grade, id: findClassId(payload, key2) }, shift: meta2.shift, variant })) continue;
+              // place C2 lesson at new slot, then L in C
+              grid2[d3.id][q3.number] = cell2;
+              reserveResource({ busy, settings, variant, level: meta2.level, shift: meta2.shift, dayId: d3.id, period: q3, lesson: m2 });
+              // now verify L fits in C (T should be free now)
+              if (!hardBlockReason({ grid: gridC, day, period, lesson: L, busy, settings, schoolClass: C, shift, variant })) {
+                gridC[day.id][period.number] = lessonToCell(L);
+                reserveResource({ busy, settings, variant, level, shift, dayId: day.id, period, lesson: L });
+                done = true;
+              } else {
+                grid2[d3.id][q3.number] = null;
+                releaseResource({ busy, settings, variant, level: meta2.level, shift: meta2.shift, dayId: d3.id, period: q3, lesson: m2 });
+              }
+              if (done) break;
+            }
+            if (done) break;
+          }
+          if (done) return true;
+          // restore cell2
+          grid2[day.id][p2.number] = cell2;
+          reserveResource({ busy, settings, variant, level: meta2.level, shift: meta2.shift, dayId: day.id, period: p2, lesson: m2 });
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function gradeFromKey(key) {
+  const m = /^(\d+)/.exec(key);
+  return m ? Number(m[1]) : 1;
+}
+
+function findClassId(payload, key) {
+  return payload.classMeta[key]?.id ?? null;
 }
 
 function lessonsForClass(assignments, classId, strategy, variant = 'single', weekMode = 'one') {
