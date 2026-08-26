@@ -680,7 +680,7 @@ app.get('/api/export/schedules/:id.xlsx', async (req, res) => {
           aoa.push([day.name, period.number, `${periodTime(payload, classLevel, classShift, period.number)} / ${periodDuration(payload, classLevel, classShift, period.number)} мин`, cell?.subject || '', cell?.teacher || '', cell?.room || '', cell?.difficulty || '']);
         }
       }
-      sheets.push({ name: safeSheet(`${className}-${week}`), rows: aoa });
+      sheets.push({ name: safeSheet(`${className}${sheetWeekSuffix(week)}`), rows: aoa });
     }
   }
   const buffer = writeXlsx(sheets);
@@ -712,12 +712,92 @@ app.get('/api/print/schedules/:id.html', (req, res) => {
   res.send(printHtml(JSON.parse(row.payload)));
 });
 
-app.get('/api/export/schedules/:id.log.txt', (req, res) => {
+app.get('/api/export/schedules/:id/log.txt', (req, res) => {
   const row = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).send('Расписание не найдено');
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   setDownloadName(res, `Журнал-логов-расписание-${row.id}.txt`);
   res.send(scheduleLogText(row));
+});
+
+app.get('/api/export/schedules/:id/log.xlsx', (req, res) => {
+  const row = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).send('Расписание не найдено');
+  const p = JSON.parse(row.payload);
+  const diags = p.diagnostics || [];
+  const byReason = {};
+  for (const d of diags) { const r = d.reason || 'причина не определена'; byReason[r] = (byReason[r] || 0) + 1; }
+  const sheets = [
+    {
+      name: 'Ошибки',
+      rows: [
+        ['Класс', 'Неделя', 'Предмет', 'Учитель', 'Причина'],
+        ...diags.map((d) => [d.className || '', weekLabel(d.week || 'single'), d.subject || '', d.teacher || 'Не назначен', d.reason || d.message || ''])
+      ]
+    },
+    {
+      name: 'Причины',
+      rows: [['Причина', 'Сколько уроков'], ...Object.entries(byReason).sort((a, b) => b[1] - a[1])]
+    },
+    {
+      name: 'Перегруженные учителя',
+      rows: [
+        ['Учитель', 'Назначено уроков', 'Свободно слотов', 'Не помещается'],
+        ...((p.teacherOverload || []).map((t) => [t.teacher, t.lessons, t.slots, t.deficit]))
+      ]
+    },
+    {
+      name: 'Качество',
+      rows: [
+        ['Показатель', 'Значение'],
+        ['Расписание #', row.id],
+        ['Создано', new Date(row.created_at).toLocaleString('ru-RU')],
+        ['Режим недели', p.weekMode === 'two' ? 'четная и нечетная' : 'одна неделя'],
+        ['Стратегия', p.quality?.strategy || '-'],
+        ['Оценка', p.quality?.score ?? '-'],
+        ['Окна у классов', p.quality?.classWindows ?? '-'],
+        ['Сложные уроки на 5+ уроке', p.quality?.lateHardLessons ?? '-'],
+        ['Дисбаланс сложности', p.quality?.difficultyImbalance ?? '-'],
+        ['Всего непоставлено', diags.length]
+      ]
+    }
+  ];
+  sendXlsx(res, `Журнал-логов-расписание-${row.id}.xlsx`, sheets);
+});
+
+app.get('/api/export/constraints.xlsx', (_req, res) => {
+  const teacherName = new Map(allTeachers().map((t) => [t.id, t.fullName]));
+  const dayName = new Map((json.get('days') || []).map((d) => [d.id, d.name]));
+  const classById = new Map(allClasses().map((c) => [c.id, `${c.grade}${c.letter}`]));
+  const availRows = allTeacherAvailability()
+    .slice()
+    .sort((a, b) => (teacherName.get(a.teacherId) || '').localeCompare(teacherName.get(b.teacherId) || '', 'ru'));
+  const availabilitySheet = [['Учитель', 'День', 'Режим', 'Приходит с урока', 'Уходит после урока', 'Окна 1 смена', 'Окна 2 смена']];
+  for (const r of availRows) {
+    availabilitySheet.push([
+      teacherName.get(r.teacherId) || `id ${r.teacherId}`,
+      dayName.get(r.dayId) || r.dayId,
+      r.dayOff ? 'выходной' : 'работает',
+      r.dayOff ? '' : (r.fromPeriod ?? ''),
+      r.dayOff ? '' : (r.toPeriod ?? ''),
+      (r.windows?.morning || []).join(', '),
+      (r.windows?.afternoon || []).join(', ')
+    ]);
+  }
+  const blocksSheet = [['День', 'Смена', 'Класс', 'Урок', 'Причина']];
+  for (const b of allScheduleBlocks()) {
+    blocksSheet.push([
+      dayName.get(b.dayId) || b.dayId,
+      b.shift === 'morning' ? '1 смена' : b.shift === 'afternoon' ? '2 смена' : 'обе смены',
+      b.classId ? (classById.get(b.classId) || '') : 'все классы',
+      b.periodNumber,
+      b.reason || ''
+    ]);
+  }
+  sendXlsx(res, 'Ограничения-и-доступность.xlsx', [
+    { name: 'Доступность учителей', rows: availabilitySheet },
+    { name: 'Блокировки школы', rows: blocksSheet }
+  ]);
 });
 
 function scheduleLogText(row) {
@@ -1101,6 +1181,11 @@ function weekLabel(week) {
   return ({ single: 'Одна неделя', odd: 'Нечетная', even: 'Четная' })[week] || week;
 }
 
+// Short Russian suffix for sheet names (avoid English "single/odd/even" in tabs).
+function sheetWeekSuffix(week) {
+  return ({ single: '', odd: ' нечет', even: ' чет' })[week] ?? ` ${week}`;
+}
+
 function classNameSort(a, b) {
   const left = parseClassName(typeof a === 'string' ? a : a.className) || { grade: 0, letter: '' };
   const right = parseClassName(typeof b === 'string' ? b : b.className) || { grade: 0, letter: '' };
@@ -1245,7 +1330,7 @@ function scheduleGridSheets(payload) {
       rows: [['Класс', 'Смена', 'Неделя', 'Лист']].concat(Object.entries(payload.classes).flatMap(([className, weeks]) => (
         Object.keys(weeks).map((week) => {
           const shift = payload.classMeta?.[className]?.shift || 'morning';
-          return [className, shiftLabel(payload, shift), weekLabel(week), safeSheet(`${className}-${week}`)];
+          return [className, shiftLabel(payload, shift), weekLabel(week), safeSheet(`${className}${sheetWeekSuffix(week)}`)];
         })
       )))
     }
@@ -1254,7 +1339,7 @@ function scheduleGridSheets(payload) {
     for (const [week, grid] of Object.entries(weeks)) {
       const shift = payload.classMeta?.[className]?.shift || 'morning';
       sheets.push({
-        name: safeSheet(`${className}-${week}`),
+        name: safeSheet(`${className}${sheetWeekSuffix(week)}`),
         rows: classScheduleGridRows(payload, className, shift, week, grid)
       });
     }

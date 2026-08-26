@@ -1177,6 +1177,9 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
   return (
     <section className="constraints-layout">
       <div className="panel wide-panel">
+        <div className="segmented">
+          <button className="export-link" onClick={async () => { await downloadFile('/export/constraints.xlsx'); setNotice('Ограничения выгружены в Excel'); }}><FileSpreadsheet size={18} /> Скачать все ограничения (Excel)</button>
+        </div>
         <PanelTitle icon={ShieldCheck} title="Блокировка уроков школы" />
         <p className="hint">Блокируйте слот для всей школы или только для выбранного класса. Пример: понедельник, 1 урок, Разговоры о важном.</p>
         <div className="segmented">
@@ -1593,7 +1596,7 @@ function Generate({ state, selectedClasses, setSelectedClasses, weekMode, setWee
           <button className="export-link primary-export" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.grid.xlsx`)}><FileSpreadsheet size={18} /> Скачать все расписание</button>
           <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.pdf`)}><FileDown size={18} /> Экспорт в PDF</button>
           <button className="export-link" onClick={() => openProtectedFile(`/print/schedules/${schedule.id}.html`)}><Printer size={18} /> Печатная форма</button>
-          <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.log.txt`)}><FileDown size={18} /> Журнал логов (ошибки)</button>
+          <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}/log.xlsx`)}><FileSpreadsheet size={18} /> Журнал логов (Excel)</button>
         </div>
       )}
       {schedule?.diagnostics?.length > 0 && (
