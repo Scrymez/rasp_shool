@@ -487,16 +487,22 @@ app.post('/api/teacher-availability', (req, res) => {
     dayOff: z.union([z.boolean(), z.number()]).optional(),
     fromPeriod: z.number().int().min(1).nullable().optional(),
     toPeriod: z.number().int().min(1).nullable().optional(),
-    windows: z.array(z.number().int().min(1)).optional()
+    windows: z.union([
+      z.array(z.number().int().min(1)),
+      z.object({ morning: z.array(z.number().int().min(1)).optional(), afternoon: z.array(z.number().int().min(1)).optional() })
+    ]).optional()
   })).parse(req.body.availability || []);
   db.exec('DELETE FROM teacher_availability');
   const stmt = db.prepare('INSERT OR REPLACE INTO teacher_availability (teacher_id, day_id, day_off, from_period, to_period, windows) VALUES (?, ?, ?, ?, ?, ?)');
+  const cleanWin = (arr) => [...new Set((arr || []).map(Number).filter((n) => n > 0))].sort((a, b) => a - b);
   runTransaction(() => rows.forEach((row) => {
     const dayOff = row.dayOff ? 1 : 0;
     const from = dayOff ? null : (row.fromPeriod ?? null);
     const to = dayOff ? null : (row.toPeriod ?? null);
-    const windows = dayOff ? [] : [...new Set((row.windows || []).map(Number).filter((n) => n > 0))];
-    if (!dayOff && from == null && to == null && !windows.length) return; // no restriction, skip
+    const raw = Array.isArray(row.windows) ? { morning: row.windows, afternoon: row.windows } : (row.windows || {});
+    const windows = dayOff ? { morning: [], afternoon: [] } : { morning: cleanWin(raw.morning), afternoon: cleanWin(raw.afternoon) };
+    const hasWin = windows.morning.length || windows.afternoon.length;
+    if (!dayOff && from == null && to == null && !hasWin) return; // no restriction, skip
     stmt.run(row.teacherId, row.dayId, dayOff, from, to, JSON.stringify(windows));
   }));
   audit('replace', 'teacher-availability', { count: rows.length });
@@ -545,13 +551,14 @@ app.post('/api/settings', (req, res) => {
   json.set('shifts', req.body.shifts || json.get('shifts'));
   json.set('levelStarts', req.body.levelStarts || json.get('levelStarts'));
   json.set('timetables', req.body.timetables || json.get('timetables'));
+  json.set('maxLessonsByShift', req.body.maxLessonsByShift || json.get('maxLessonsByShift'));
   json.set('sanpin', req.body.sanpin || json.get('sanpin'));
   audit('update', 'settings');
   res.json({ settings: settingsPayload() });
 });
 
 function settingsPayload() {
-  return { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), levelStarts: json.get('levelStarts'), timetables: json.get('timetables'), sanpin: json.get('sanpin') };
+  return { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), levelStarts: json.get('levelStarts'), timetables: json.get('timetables'), maxLessonsByShift: json.get('maxLessonsByShift'), sanpin: json.get('sanpin') };
 }
 
 app.post('/api/generate', (req, res) => {

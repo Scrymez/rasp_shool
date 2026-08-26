@@ -243,6 +243,7 @@ function seedSettings() {
       'СОО': { morning: '08:30', afternoon: '13:10' }
     },
     timetables: defaultTimetables(),
+    maxLessonsByShift: { morning: 8, afternoon: 8 },
     sanpin: {
       maxLessonsByGrade: { 1: 4, 2: 5, 3: 5, 4: 5, 5: 6, 6: 6, 7: 7, 8: 7, 9: 7, 10: 7, 11: 7 },
       maxDailyDifficultyByGrade: { 1: 16, 2: 18, 3: 19, 4: 20, 5: 24, 6: 25, 7: 26, 8: 27, 9: 28, 10: 29, 11: 29 }
@@ -422,11 +423,13 @@ export function allTeacherConstraints() {
 }
 
 function parseWindows(value) {
+  const clean = (arr) => (Array.isArray(arr) ? [...new Set(arr.map(Number).filter((n) => n > 0))].sort((a, b) => a - b) : []);
   try {
-    const arr = JSON.parse(value || '[]');
-    return Array.isArray(arr) ? arr.map(Number).filter((n) => n > 0) : [];
+    const parsed = JSON.parse(value || '{}');
+    if (Array.isArray(parsed)) { const a = clean(parsed); return { morning: a, afternoon: a }; }
+    return { morning: clean(parsed.morning), afternoon: clean(parsed.afternoon) };
   } catch {
-    return [];
+    return { morning: [], afternoon: [] };
   }
 }
 

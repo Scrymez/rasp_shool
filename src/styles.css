@@ -584,10 +584,15 @@ output {
 
 .availability-grid {
   display: grid;
-  grid-template-columns: minmax(110px, 0.6fr) minmax(120px, 0.5fr) minmax(190px, 0.95fr) minmax(190px, 0.95fr) minmax(180px, 0.9fr);
+  grid-template-columns: minmax(100px, 0.5fr) minmax(110px, 0.45fr) minmax(180px, 0.85fr) minmax(180px, 0.85fr) minmax(230px, 1.1fr);
   gap: 10px 12px;
   align-items: center;
 }
+
+.window-cell { display: flex; flex-direction: column; gap: 6px; }
+.window-cell.disabled { opacity: 0.4; pointer-events: none; }
+.window-row { display: flex; align-items: center; gap: 8px; }
+.window-label { color: var(--gold); font-size: 11px; min-width: 34px; }
 
 .window-chips {
   display: flex;
@@ -596,6 +601,18 @@ output {
 }
 
 .window-chips.disabled { opacity: 0.4; pointer-events: none; }
+
+.tt-maxlessons {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.tt-maxlessons > span { color: var(--gold); font-weight: 600; }
+.tt-maxlessons label { display: inline-flex; align-items: center; gap: 6px; }
+.tt-maxlessons input { width: 64px; }
+.tt-maxlessons small { color: var(--muted, #9a93b4); }
 
 .win-chip {
   width: 30px;
