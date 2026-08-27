@@ -663,6 +663,13 @@ app.get('/api/export/schedules/:id.grid.xlsx', (req, res) => {
   sendXlsx(res, `Все-расписание-сеткой-${row.id}.xlsx`, scheduleGridSheets(payload));
 });
 
+app.get('/api/export/schedules/:id/final.xlsx', (req, res) => {
+  const row = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).send('Расписание не найдено');
+  const payload = JSON.parse(row.payload);
+  sendXlsx(res, `Расписание-школы-${row.id}.xlsx`, scheduleFinalSheets(payload));
+});
+
 app.get('/api/export/schedules/:id.xlsx', async (req, res) => {
   const row = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).send('Расписание не найдено');
@@ -1154,9 +1161,12 @@ ${safeSheets.map((_, index) => `<Override PartName="/xl/worksheets/sheet${index 
 ${safeSheets.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join('')}
 </Relationships>`);
   safeSheets.forEach((sheet, index) => {
+    const merges = Array.isArray(sheet.merges) && sheet.merges.length
+      ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells>`
+      : '';
     files[`xl/worksheets/sheet${index + 1}.xml`] = xml(`<?xml version="1.0" encoding="UTF-8"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<sheetData>${sheet.rows.map((row, rowIndex) => `<row r="${rowIndex + 1}">${row.map((value, colIndex) => cellXml(rowIndex + 1, colIndex, value)).join('')}</row>`).join('')}</sheetData>
+<sheetData>${sheet.rows.map((row, rowIndex) => `<row r="${rowIndex + 1}">${row.map((value, colIndex) => cellXml(rowIndex + 1, colIndex, value)).join('')}</row>`).join('')}</sheetData>${merges}
 </worksheet>`);
   });
   return Buffer.from(zipSync(files));
@@ -1374,6 +1384,46 @@ function classScheduleTemplateRows(settings, schoolClass) {
     rows.push([`${period.number} урок`, `${periodTime(settings, schoolClass.level, shiftId, period.number)} / ${periodDuration(settings, schoolClass.level, shiftId, period.number)} мин`, ...activeDays.map(() => '')]);
   }
   return rows;
+}
+
+// Final printable master grid: one sheet per week; classes 1→11 across the columns,
+// days×lessons down the rows, subject in each cell (matches the school's final form).
+function scheduleFinalSheets(payload) {
+  const classNames = Object.keys(payload.classes).sort(classNameSort);
+  if (!classNames.length) return [{ name: 'Расписание', rows: [['Нет классов']] }];
+  const weeks = Object.keys(payload.classes[classNames[0]] || { single: {} });
+  // Reference (level, shift) for the Время column = the combination most classes use.
+  const comboCount = {};
+  for (const c of classNames) { const m = payload.classMeta?.[c] || {}; const k = `${m.level}|${m.shift || 'morning'}`; comboCount[k] = (comboCount[k] || 0) + 1; }
+  const [refLevel, refShift] = (Object.entries(comboCount).sort((a, b) => b[1] - a[1])[0] || ['|morning'])[0].split('|');
+  const sheetName = (week) => week === 'odd' ? 'Нечётная неделя' : week === 'even' ? 'Чётная неделя' : 'Расписание';
+
+  return weeks.map((week) => {
+    const rows = [];
+    rows.push(['Класс (смена)', '', '', ...classNames.map((c) => `${c} ${shiftLabel(payload, payload.classMeta?.[c]?.shift || 'morning')}`)]);
+    rows.push(['День', 'Урок', 'Время', ...classNames.map(() => 'Предмет')]);
+    const merges = ['A1:C1'];
+    let r = rows.length; // 0-based count so far; next data row is index r (1-based r+1)
+    for (const day of payload.days) {
+      const startRow = r + 1; // 1-based row number of the first period of this day
+      payload.periods.forEach((period, i) => {
+        rows.push([
+          i === 0 ? day.name : '',
+          period.number,
+          `${periodTime(payload, refLevel, refShift, period.number)} / ${periodDuration(payload, refLevel, refShift, period.number)} мин`,
+          ...classNames.map((c) => {
+            const grid = payload.classes[c][week];
+            const cell = grid?.[day.id]?.[period.number];
+            return cell ? cell.subject : '';
+          })
+        ]);
+        r += 1;
+      });
+      const endRow = r; // 1-based last row of this day
+      if (endRow > startRow) merges.push(`A${startRow}:A${endRow}`);
+    }
+    return { name: sheetName(week), rows, merges };
+  });
 }
 
 function scheduleGridSheets(payload) {
