@@ -727,42 +727,41 @@ app.get('/api/export/schedules/:id/log.xlsx', (req, res) => {
   const diags = p.diagnostics || [];
   const byReason = {};
   for (const d of diags) { const r = d.reason || 'причина не определена'; byReason[r] = (byReason[r] || 0) + 1; }
+  const issues = computeScheduleIssues(p);
+  const overload = p.teacherOverload || [];
+  const withEmpty = (header, rows, note) => rows.length ? [header, ...rows] : [header, [note]];
   const sheets = [
     {
       name: 'Ошибки',
-      rows: [
-        ['Класс', 'Неделя', 'Предмет', 'Учитель', 'Причина'],
-        ...diags.map((d) => [d.className || '', weekLabel(d.week || 'single'), d.subject || '', d.teacher || 'Не назначен', d.reason || d.message || ''])
-      ]
+      rows: withEmpty(['Класс', 'Неделя', 'Предмет', 'Учитель', 'Причина'],
+        diags.map((d) => [d.className || '', weekLabel(d.week || 'single'), d.subject || '', d.teacher || 'Не назначен', d.reason || d.message || '']),
+        'Ошибок нет — все уроки расставлены.')
     },
     {
       name: 'Причины',
-      rows: [['Причина', 'Сколько уроков'], ...Object.entries(byReason).sort((a, b) => b[1] - a[1])]
+      rows: withEmpty(['Причина', 'Сколько уроков'], Object.entries(byReason).sort((a, b) => b[1] - a[1]), 'Ошибок нет.')
     },
     {
       name: 'Перегруженные учителя',
-      rows: [
-        ['Учитель', 'Назначено уроков', 'Свободно слотов', 'Не помещается'],
-        ...((p.teacherOverload || []).map((t) => [t.teacher, t.lessons, t.slots, t.deficit]))
-      ]
+      rows: withEmpty(['Учитель', 'Назначено уроков', 'Свободно слотов', 'Не помещается'],
+        overload.map((t) => [t.teacher, t.lessons, t.slots, t.deficit]),
+        'Перегруженных учителей нет — у всех свободных слотов хватает на их уроки.')
     },
     {
       name: 'Рекомендации',
-      rows: [['Рекомендация'], ...buildRecommendations(p, computeScheduleIssues(p)).map((r) => [r])]
+      rows: [['Рекомендация'], ...buildRecommendations(p, issues).map((r) => [r])]
     },
     {
       name: 'Совпадения учителей',
-      rows: [
-        ['Учитель', 'Неделя', 'День', 'Класс/урок 1', 'Класс/урок 2'],
-        ...(() => { const is = computeScheduleIssues(p); return is.teacherConflicts.map((c) => [c.teacher, weekLabel(c.week), c.day, c.a, c.b]); })()
-      ]
+      rows: withEmpty(['Учитель', 'Неделя', 'День', 'Класс/урок 1', 'Класс/урок 2'],
+        issues.teacherConflicts.map((c) => [c.teacher, weekLabel(c.week), c.day, c.a, c.b]),
+        'Совпадений нет — ни один учитель не стоит в двух классах одновременно.')
     },
     {
       name: 'Пустые окна',
-      rows: [
-        ['Класс', 'Неделя', 'День', 'Урок (пусто)'],
-        ...computeScheduleIssues(p).classGaps.map((gcell) => [gcell.className, weekLabel(gcell.week), gcell.day, gcell.period])
-      ]
+      rows: withEmpty(['Класс', 'Неделя', 'День', 'Урок (пусто)'],
+        issues.classGaps.map((gcell) => [gcell.className, weekLabel(gcell.week), gcell.day, gcell.period]),
+        'Пустых окон между уроками нет.')
     },
     {
       name: 'Качество',
