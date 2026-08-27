@@ -1603,7 +1603,8 @@ function Generate({ state, selectedClasses, setSelectedClasses, weekMode, setWee
       {schedule?.id && (
         <div className="export-row">
           <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.xlsx`)}><Download size={18} /> Экспорт в Excel</button>
-          <button className="export-link primary-export" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}/final.xlsx`)}><FileSpreadsheet size={18} /> Скачать все расписание</button>
+          <button className="export-link primary-export" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}/final.xlsx`)}><FileSpreadsheet size={18} /> Финишная форма (Excel)</button>
+          <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.grid.xlsx`)}><FileSpreadsheet size={18} /> Все расписание + листы</button>
           <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.pdf`)}><FileDown size={18} /> Экспорт в PDF</button>
           <button className="export-link" onClick={() => openProtectedFile(`/print/schedules/${schedule.id}.html`)}><Printer size={18} /> Печатная форма</button>
           <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}/log.xlsx`)}><FileSpreadsheet size={18} /> Журнал логов (Excel)</button>

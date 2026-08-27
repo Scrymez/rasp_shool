@@ -1400,7 +1400,11 @@ function scheduleFinalSheets(payload) {
 
   return weeks.map((week) => {
     const rows = [];
-    rows.push(['Класс (смена)', '', '', ...classNames.map((c) => `${c} ${shiftLabel(payload, payload.classMeta?.[c]?.shift || 'morning')}`)]);
+    rows.push(['Класс (смена)', '', '', ...classNames.map((c) => {
+      const pc = parseClassName(c) || { grade: c, letter: '' };
+      const sh = payload.classMeta?.[c]?.shift || 'morning';
+      return `${pc.grade} "${String(pc.letter || '').toLowerCase()}"\n(${sh === 'afternoon' ? '2 см.' : '1 см.'})`;
+    })]);
     rows.push(['День', 'Урок', 'Время', ...classNames.map(() => 'Предмет')]);
     const merges = ['A1:C1'];
     let r = rows.length; // 0-based count so far; next data row is index r (1-based r+1)
@@ -1677,27 +1681,45 @@ function shiftIdFromLabel(payload, label) {
 }
 
 function printHtml(payload) {
-  const sections = Object.entries(payload.classes).flatMap(([className, weeks]) => (
-    Object.entries(weeks).map(([week, grid]) => `
-      <section>
-        <h2>${escapeHtml(className)} · ${escapeHtml(shiftLabel(payload, payload.classMeta?.[className]?.shift || 'morning'))} · ${escapeHtml(weekLabel(week))}</h2>
-        <table>
-          <thead><tr><th>День</th>${payload.periods.map((period) => `<th>${period.number}<br><small>${escapeHtml(periodTime(payload, payload.classMeta?.[className]?.level, payload.classMeta?.[className]?.shift || 'morning', period.number))}</small></th>`).join('')}</tr></thead>
-          <tbody>${payload.days.map((day) => `
-            <tr><th>${escapeHtml(day.name)}</th>${payload.periods.map((period) => {
-              const cell = grid[day.id]?.[period.number];
-              return `<td>${cell ? `<b>${escapeHtml(cell.subject)}</b><br>${escapeHtml(cell.teacher || '')}<br><small>${escapeHtml(cell.room || '')}</small>` : ''}</td>`;
-            }).join('')}</tr>
-          `).join('')}</tbody>
-        </table>
-      </section>
-    `)
-  )).join('');
+  const classNames = Object.keys(payload.classes).sort(classNameSort);
+  const weeks = classNames.length ? Object.keys(payload.classes[classNames[0]] || { single: {} }) : ['single'];
+  const comboCount = {};
+  for (const c of classNames) { const m = payload.classMeta?.[c] || {}; const k = `${m.level}|${m.shift || 'morning'}`; comboCount[k] = (comboCount[k] || 0) + 1; }
+  const [refLevel, refShift] = (Object.entries(comboCount).sort((a, b) => b[1] - a[1])[0] || ['|morning'])[0].split('|');
+  const classHead = (c) => {
+    const pc = parseClassName(c) || { grade: c, letter: '' };
+    const sh = payload.classMeta?.[c]?.shift || 'morning';
+    return `${escapeHtml(String(pc.grade))} "${escapeHtml(String(pc.letter || '').toLowerCase())}"<br><small>(${sh === 'afternoon' ? '2 см.' : '1 см.'})</small>`;
+  };
+  const sections = weeks.map((week) => `
+    <section>
+      ${weeks.length > 1 ? `<h2>${escapeHtml(weekLabel(week))}</h2>` : ''}
+      <table>
+        <thead>
+          <tr><th>День</th><th>Урок</th><th>Время</th>${classNames.map((c) => `<th>${classHead(c)}</th>`).join('')}</tr>
+        </thead>
+        <tbody>
+          ${payload.days.map((day) => payload.periods.map((period, i) => `
+            <tr>
+              ${i === 0 ? `<th class="day" rowspan="${payload.periods.length}">${escapeHtml(day.name)}</th>` : ''}
+              <td class="num">${period.number}</td>
+              <td class="time">${escapeHtml(periodTime(payload, refLevel, refShift, period.number))}<br><small>${periodDuration(payload, refLevel, refShift, period.number)} мин</small></td>
+              ${classNames.map((c) => {
+                const cell = payload.classes[c][week]?.[day.id]?.[period.number];
+                return `<td>${cell ? `<b>${escapeHtml(cell.subject)}</b>` : ''}</td>`;
+              }).join('')}
+            </tr>
+          `).join('')).join('')}
+        </tbody>
+      </table>
+    </section>
+  `).join('');
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${escapeHtml(payload.title)}</title>
   <style>
-    body{font-family:Arial,sans-serif;margin:24px;color:#111} h1{margin:0 0 18px} section{break-after:page;margin-bottom:24px}
-    table{border-collapse:collapse;width:100%;font-size:12px} th,td{border:1px solid #444;padding:6px;vertical-align:top} th{background:#eee}
-    small{color:#555}@media print{button{display:none} body{margin:8mm} section{break-after:page}}
+    body{font-family:Arial,sans-serif;margin:16px;color:#111} h1{margin:0 0 14px;font-size:18px} h2{font-size:15px;margin:12px 0 6px} section{margin-bottom:20px}
+    table{border-collapse:collapse;width:100%;font-size:11px} th,td{border:1px solid #333;padding:4px 6px;vertical-align:middle;text-align:center} th{background:#eee}
+    td.time,td.num{white-space:nowrap;color:#333} th.day{font-weight:bold;writing-mode:horizontal-tb} small{color:#555}
+    @media print{button{display:none} body{margin:6mm} @page{size:landscape}}
   </style></head><body><button onclick="window.print()">Печать</button><h1>${escapeHtml(payload.title)}</h1>${sections}</body></html>`;
 }
 
