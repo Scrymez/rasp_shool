@@ -119,6 +119,14 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
       if (tryCrossClassRelocate(payload, item, { busy, settings, days, variant })) { item.placed = true; }
     }
 
+    // Even out the day loads (all moves respect teacher/room/SanPiN constraints), then remove
+    // internal gaps so lessons sit back-to-back with no empty windows between them.
+    for (const schoolClass of classOrder) {
+      const ctx = ctxByKey[classKey(schoolClass)];
+      balanceClassDays(payload, ctx, { busy, settings, days, variant });
+      compactClass(payload, ctx, { busy, settings, days, variant });
+    }
+
     for (const { lesson, ctx, placed } of unplaced) {
       if (placed) continue;
       const { schoolClass, key, shift, classPeriods } = ctx;
@@ -343,6 +351,80 @@ function gradeFromKey(key) {
   return m ? Number(m[1]) : 1;
 }
 
+// Pull lessons up to remove empty windows between lessons (no holes inside a day).
+function compactClass(payload, ctx, { busy, settings, days, variant }) {
+  const { schoolClass, shift, classPeriods, key } = ctx;
+  const level = schoolClass.level;
+  const grid = payload.classes[key][variant];
+  for (const day of days) {
+    let guard = 0;
+    while (guard++ < 60) {
+      const used = classPeriods.filter((p) => grid[day.id]?.[p.number]).map((p) => p.number);
+      if (!used.length) break;
+      const last = Math.max(...used);
+      const hole = classPeriods.find((p) => p.number < last && !grid[day.id]?.[p.number]);
+      if (!hole) break; // no internal gap
+      let moved = false;
+      for (const p of classPeriods) {
+        if (p.number <= hole.number) continue;
+        const cell = grid[day.id]?.[p.number];
+        if (!cell) continue;
+        const lesson = cellToLesson(cell);
+        grid[day.id][p.number] = null;
+        releaseResource({ busy, settings, variant, level, shift, dayId: day.id, period: p, lesson });
+        if (!hardBlockReason({ grid, day, period: hole, lesson, busy, settings, schoolClass, shift, variant })) {
+          grid[day.id][hole.number] = cell;
+          reserveResource({ busy, settings, variant, level, shift, dayId: day.id, period: hole, lesson });
+          moved = true;
+          break;
+        }
+        grid[day.id][p.number] = cell;
+        reserveResource({ busy, settings, variant, level, shift, dayId: day.id, period: p, lesson });
+      }
+      if (!moved) break;
+    }
+  }
+}
+
+// Even out lesson counts across days (7/6 instead of 8/5). Every move is validated by
+// hardBlockReason, so teacher day-offs, windows, arrival/departure and busy times are respected.
+function balanceClassDays(payload, ctx, { busy, settings, days, variant }) {
+  const { schoolClass, shift, classPeriods, key } = ctx;
+  const level = schoolClass.level;
+  const grid = payload.classes[key][variant];
+  let guard = 0;
+  while (guard++ < 60) {
+    let heavy = null; let light = null;
+    for (const day of days) {
+      const load = dayLoad(grid, day.id);
+      if (!heavy || load > dayLoad(grid, heavy.id)) heavy = day;
+      if (!light || load < dayLoad(grid, light.id)) light = day;
+    }
+    if (!heavy || !light || heavy.id === light.id) break;
+    if (dayLoad(grid, heavy.id) - dayLoad(grid, light.id) <= 1) break;
+    const heavyUsed = classPeriods.filter((p) => grid[heavy.id]?.[p.number]).sort((a, b) => b.number - a.number);
+    let moved = false;
+    for (const q of heavyUsed) {
+      const cell = grid[heavy.id][q.number];
+      const lesson = cellToLesson(cell);
+      grid[heavy.id][q.number] = null;
+      releaseResource({ busy, settings, variant, level, shift, dayId: heavy.id, period: q, lesson });
+      for (const p of classPeriods) {
+        if (grid[light.id]?.[p.number]) continue;
+        if (hardBlockReason({ grid, day: light, period: p, lesson, busy, settings, schoolClass, shift, variant })) continue;
+        grid[light.id][p.number] = cell;
+        reserveResource({ busy, settings, variant, level, shift, dayId: light.id, period: p, lesson });
+        moved = true;
+        break;
+      }
+      if (moved) break;
+      grid[heavy.id][q.number] = cell;
+      reserveResource({ busy, settings, variant, level, shift, dayId: heavy.id, period: q, lesson });
+    }
+    if (!moved) break;
+  }
+}
+
 function findClassId(payload, key) {
   return payload.classMeta[key]?.id ?? null;
 }
@@ -423,6 +505,7 @@ function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClas
     .map(([number]) => Number(number));
   if (sameSubjectPeriods.length >= 2) return 'subject-daily-limit';
   if (!lesson.paired && sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-consecutive';
+  if (isEarlyOnly(lesson.subjectName, schoolClass.grade) && period.number > 4) return 'early-only';
   if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return 'school-block';
   if (isTeacherUnavailable(settings, lesson.teacherId, day.id, period.number, shift)) return 'teacher-off';
   if (isOutsideAvailability(settings, lesson.teacherId, day.id, period.number, shift)) return 'teacher-window';
@@ -433,8 +516,16 @@ function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClas
   return null;
 }
 
+// Math and Russian in grades 5-6 must be on lessons 1-4 only.
+function isEarlyOnly(subjectName, grade) {
+  if (grade !== 5 && grade !== 6) return false;
+  const n = String(subjectName || '').trim().toLowerCase();
+  return n === 'математика' || n === 'русский язык';
+}
+
 const REASON_TEXT = {
   'occupied': 'нет свободных уроков в сетке класса (все слоты заняты)',
+  'early-only': 'Математика/Русский язык в 5–6 классе можно ставить только на 1–4 урок',
   'subject-daily-limit': 'предмет уже стоит 2 раза в этот день (больше нельзя)',
   'subject-consecutive': 'этот предмет нельзя ставить подряд в один день (спаренно можно только отмеченным «Подряд»)',
   'school-block': 'подходящие слоты заблокированы (блокировка уроков школы)',
@@ -456,7 +547,7 @@ function diagnoseFailure({ grid, days, periods, lesson, busy, settings, schoolCl
     }
   }
   // Prefer the most informative reason over generic "occupied" when both exist.
-  const order = ['teacher-busy', 'teacher-off', 'teacher-window', 'room-busy', 'difficulty', 'day-full', 'subject-daily-limit', 'subject-consecutive', 'school-block', 'occupied'];
+  const order = ['teacher-busy', 'teacher-off', 'teacher-window', 'room-busy', 'difficulty', 'day-full', 'early-only', 'subject-daily-limit', 'subject-consecutive', 'school-block', 'occupied'];
   let best = null;
   for (const code of order) if (tally[code] && (!best || tally[code] > tally[best])) best = code;
   // if a specific (non-occupied) reason blocks at least a quarter of slots, prefer it

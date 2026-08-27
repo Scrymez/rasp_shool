@@ -747,6 +747,20 @@ app.get('/api/export/schedules/:id/log.xlsx', (req, res) => {
       ]
     },
     {
+      name: 'Совпадения учителей',
+      rows: [
+        ['Учитель', 'Неделя', 'День', 'Класс/урок 1', 'Класс/урок 2'],
+        ...(() => { const is = computeScheduleIssues(p); return is.teacherConflicts.map((c) => [c.teacher, weekLabel(c.week), c.day, c.a, c.b]); })()
+      ]
+    },
+    {
+      name: 'Пустые окна',
+      rows: [
+        ['Класс', 'Неделя', 'День', 'Урок (пусто)'],
+        ...computeScheduleIssues(p).classGaps.map((gcell) => [gcell.className, weekLabel(gcell.week), gcell.day, gcell.period])
+      ]
+    },
+    {
       name: 'Качество',
       rows: [
         ['Показатель', 'Значение'],
@@ -867,6 +881,19 @@ function scheduleLogText(row) {
     L.push('-'.repeat(50));
     for (const m of p.manualWarnings) L.push(`   • ${m}`);
   }
+
+  const issues = computeScheduleIssues(p);
+  L.push('');
+  L.push('ПРОВЕРКА: СОВПАДЕНИЯ УЧИТЕЛЕЙ (один учитель в 2 классах одновременно):');
+  L.push('-'.repeat(50));
+  if (!issues.teacherConflicts.length) L.push('   Совпадений нет.');
+  else for (const c of issues.teacherConflicts) L.push(`   • ${c.teacher} · ${c.day}${c.week !== 'single' ? ' (' + weekLabel(c.week) + ')' : ''}: ${c.a} и ${c.b} в одно время`);
+
+  L.push('');
+  L.push('ПРОВЕРКА: ПУСТЫЕ ОКНА МЕЖДУ УРОКАМИ:');
+  L.push('-'.repeat(50));
+  if (!issues.classGaps.length) L.push('   Пустых окон нет.');
+  else for (const gcell of issues.classGaps) L.push(`   • ${gcell.className} · ${gcell.day}${gcell.week !== 'single' ? ' (' + weekLabel(gcell.week) + ')' : ''}: пусто на ${gcell.period} уроке`);
 
   L.push('');
   L.push('КАЧЕСТВО:');
@@ -1601,6 +1628,63 @@ function escapeHtml(value) {
 function shiftLabel(payload, shiftId) {
   const shift = payload.shifts?.find((item) => item.id === shiftId);
   return shift ? shift.name : shiftId;
+}
+
+function periodIntervalMinutes(payload, level, shiftId, periodNumber) {
+  const tt = timetableFor(payload, level, shiftId);
+  let m = timeToMinutes(tt.start);
+  for (const p of [...tt.periods].sort((a, b) => Number(a.number) - Number(b.number))) {
+    if (Number(p.number) === Number(periodNumber)) return [m, m + Number(p.duration || 40)];
+    m += Number(p.duration || 40) + Number(p.breakAfter || 0);
+  }
+  return [m, m + 40];
+}
+
+// Analyse a finished schedule: teacher time collisions and empty windows inside a class day.
+function computeScheduleIssues(payload) {
+  const teacherConflicts = [];
+  const classGaps = [];
+  const byTeacherDay = new Map();
+  for (const [className, weeks] of Object.entries(payload.classes || {})) {
+    const meta = payload.classMeta?.[className] || {};
+    for (const [week, grid] of Object.entries(weeks)) {
+      for (const day of payload.days || []) {
+        const used = [];
+        for (const period of payload.periods || []) {
+          const cell = grid[day.id]?.[period.number];
+          if (!cell) continue;
+          used.push(period.number);
+          if (cell.teacherId) {
+            const key = `${cell.teacherId}|${week}|${day.id}`;
+            const [start, end] = periodIntervalMinutes(payload, meta.level, meta.shift, period.number);
+            const list = byTeacherDay.get(key) || [];
+            list.push({ teacher: cell.teacher, className, period: period.number, start, end, week, day: day.name });
+            byTeacherDay.set(key, list);
+          }
+        }
+        if (used.length > 1) {
+          const min = Math.min(...used);
+          const max = Math.max(...used);
+          for (let n = min; n <= max; n += 1) {
+            if (!grid[day.id]?.[n]) classGaps.push({ className, week, day: day.name, period: n });
+          }
+        }
+      }
+    }
+  }
+  for (const list of byTeacherDay.values()) {
+    const arr = list.sort((a, b) => a.start - b.start);
+    for (let i = 1; i < arr.length; i += 1) {
+      if (arr[i].start < arr[i - 1].end) {
+        teacherConflicts.push({
+          teacher: arr[i].teacher, week: arr[i].week, day: arr[i].day,
+          a: `${arr[i - 1].className} (${arr[i - 1].period} урок)`,
+          b: `${arr[i].className} (${arr[i].period} урок)`
+        });
+      }
+    }
+  }
+  return { teacherConflicts, classGaps };
 }
 
 function timetableFor(source, level, shiftId) {
