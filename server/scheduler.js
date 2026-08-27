@@ -574,7 +574,8 @@ function slotScore({ grid, days, day, period, periods, lesson, settings, schoolC
   const gapPenalty = classWindowCount(projectedGrid) * (strategy.name === 'compact' ? 32 : 20);
   const leadingGapPenalty = leadingEmptyBefore(grid, periods, day.id, period.number, settings, shift, schoolClass) * 26;
   const lateHardPenalty = lesson.difficulty >= 4 && period.number >= 5 ? 34 : 0;
-  const firstLessonEasyPenalty = lesson.difficulty <= 2 && period.number === 1 ? 8 : 0;
+  // Keep light subjects (физкультура/музыка/ИЗО, сложность 1) off the 1st lesson unless forced.
+  const firstLessonEasyPenalty = period.number === 1 ? (lesson.difficulty <= 1 ? 46 : lesson.difficulty === 2 ? 18 : 0) : 0;
   const overloadRisk = dayDifficulty(projectedGrid, day.id) / maxDailyDifficulty(settings, schoolClass.grade);
   return loadPenalty + difficultyPenalty + repeatPenalty + spreadPenalty + pairPenalty + periodPenalty + gapPenalty + leadingGapPenalty + lateHardPenalty + firstLessonEasyPenalty + overloadRisk;
 }

@@ -747,6 +747,10 @@ app.get('/api/export/schedules/:id/log.xlsx', (req, res) => {
       ]
     },
     {
+      name: 'Рекомендации',
+      rows: [['Рекомендация'], ...buildRecommendations(p, computeScheduleIssues(p)).map((r) => [r])]
+    },
+    {
       name: 'Совпадения учителей',
       rows: [
         ['Учитель', 'Неделя', 'День', 'Класс/урок 1', 'Класс/урок 2'],
@@ -813,6 +817,27 @@ app.get('/api/export/constraints.xlsx', (_req, res) => {
     { name: 'Блокировки школы', rows: blocksSheet }
   ]);
 });
+
+// Auto-generated improvement tips from the finished schedule.
+function buildRecommendations(p, issues) {
+  const diags = p.diagnostics || [];
+  const byReason = {};
+  for (const d of diags) { const r = d.reason || ''; byReason[r] = (byReason[r] || 0) + 1; }
+  const recs = [];
+  if (!diags.length && !issues.classGaps.length) recs.push('Расписание собрано без ошибок и без окон — можно экспортировать.');
+  for (const t of (p.teacherOverload || [])) {
+    recs.push(`${t.teacher}: назначено ${t.lessons} уроков, но свободно только ${t.slots} слотов — не помещается ${t.deficit}. Решение (любое): снимите ~${t.deficit} «окон»/выходных у этого учителя, ИЛИ добавьте второго учителя по его предмету, ИЛИ уменьшите ему часы на ${t.deficit}.`);
+  }
+  const noTeacher = diags.filter((d) => !d.teacher || d.teacher === 'Не назначен').length;
+  if (noTeacher) recs.push(`${noTeacher} уроков без назначенного учителя — назначьте учителей в разделе «Связки».`);
+  if (byReason['дни класса заполнены до лимита СанПиН (макс. уроков в день)']) recs.push('Часов у класса больше, чем вмещает неделя: поднимите «Макс. уроков в день» (Время → СанПиН) или включите субботу, либо уменьшите часы предметов.');
+  if (byReason['превышен дневной лимит сложности по СанПиН']) recs.push('Дневной лимит сложности низкий — поднимите его (Время → СанПиН) для нужных параллелей.');
+  if (issues.classGaps.length) recs.push(`Пустые окна (${issues.classGaps.length}) появляются там, где у учителя окно/недоступность в раннем слоте — снимите такие окна, и уроки сдвинутся плотнее (список окон ниже).`);
+  if (issues.teacherConflicts.length) recs.push(`Обнаружены совпадения учителей (${issues.teacherConflicts.length}) — это ошибка расстановки, сообщите разработчику.`);
+  recs.push('Физкультура/музыка/ИЗО не должны быть 1 уроком: генератор уже избегает этого. Для жёсткого запрета добавьте «Ограничения → Блокировка уроков школы» на нужный день + 1 урок, либо поставьте у преподавателя «окно» на 1 урок.');
+  recs.push('Идеал достижим, если у каждого учителя свободных слотов не меньше, чем его уроков в неделю. Проверьте лист «Перегруженные учителя».');
+  return recs;
+}
 
 function scheduleLogText(row) {
   const p = JSON.parse(row.payload);
@@ -883,6 +908,12 @@ function scheduleLogText(row) {
   }
 
   const issues = computeScheduleIssues(p);
+  const recs = buildRecommendations(p, issues);
+  L.push('');
+  L.push('РЕКОМЕНДАЦИИ ПО УЛУЧШЕНИЮ:');
+  L.push('-'.repeat(50));
+  for (const r of recs) L.push(`   • ${r}`);
+
   L.push('');
   L.push('ПРОВЕРКА: СОВПАДЕНИЯ УЧИТЕЛЕЙ (один учитель в 2 классах одновременно):');
   L.push('-'.repeat(50));
