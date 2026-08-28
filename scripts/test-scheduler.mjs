@@ -59,4 +59,21 @@ const grade5 = makeSchedule(5, 6);
 const grade5Days = russianPeriodsByDay(grade5, '5А');
 assert.ok(grade5Days.every((items) => items.length <= 1), 'в 5 классе русский нельзя ставить дважды в день');
 
-console.log(JSON.stringify({ ok: true, grade6Days, grade5Days }));
+const grade7Class = { id: 7, level: 'ООО', grade: 7, letter: 'А', shift: 'morning' };
+const mathGeometry = generateSchedule({
+  classes: [grade7Class],
+  assignments: [
+    { classId: 7, subjectName: 'Математика', difficulty: 5, weeklyHours: 3, paired: 0 },
+    { classId: 7, subjectName: 'Геометрия', difficulty: 5, weeklyHours: 2, paired: 0 }
+  ],
+  settings,
+  classIds: [7],
+  weekMode: 'one'
+});
+const mathGeometryGrid = mathGeometry.classes['7А'].single;
+for (const { id } of days) {
+  const subjects = Object.values(mathGeometryGrid[id]).filter(Boolean).map((cell) => cell.subject);
+  assert.ok(!(subjects.includes('Математика') && subjects.includes('Геометрия')), 'Математика и Геометрия не должны стоять в один день');
+}
+
+console.log(JSON.stringify({ ok: true, grade6Days, grade5Days, mathGeometryDiagnostics: mathGeometry.diagnostics.length }));

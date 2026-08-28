@@ -499,6 +499,7 @@ function violatesHardRules(args) {
 // Returns a reason code for why this slot can't take the lesson, or null if it can.
 function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClass, shift, variant }) {
   if (grid[day.id]?.[period.number]) return 'occupied';
+  if (hasMutuallyExclusiveSubject(grid[day.id], lesson.subjectName)) return 'subject-day-conflict';
   // Same subject: never more than 2 per day. A permitted second lesson must be adjacent.
   const sameSubjectPeriods = Object.entries(grid[day.id] || {})
     .filter(([, cell]) => cell?.subject === lesson.subjectName)
@@ -554,8 +555,16 @@ function respectsSubjectPlacementRules(grid, grade) {
       if (entries.length === 2 && Math.abs(entries[0].number - entries[1].number) !== 1) return false;
       if (entries.length === 2 && isGrade6RussianDouble({ subjectName }, grade)) grade6RussianDoubleDays += 1;
     }
+    if (bySubject.has('Математика') && bySubject.has('Геометрия')) return false;
   }
   return grade6RussianDoubleDays <= 1;
+}
+
+function hasMutuallyExclusiveSubject(dayCells, subjectName) {
+  const counterpart = subjectName === 'Математика'
+    ? 'Геометрия'
+    : subjectName === 'Геометрия' ? 'Математика' : null;
+  return counterpart != null && Object.values(dayCells || {}).some((cell) => cell?.subject === counterpart);
 }
 
 // Math and Russian in grades 5-6 must be on lessons 1-4 only.
@@ -571,6 +580,7 @@ const REASON_TEXT = {
   'subject-daily-limit': 'предмет уже стоит в этот день (обычный предмет — 1 раз в день; 2 раза можно только «Подряд»-предметам, напр. труд)',
   'subject-pair-required': 'второй урок спаренного предмета должен стоять подряд с первым',
   'subject-weekly-double-limit': 'в 6 классе Русский язык можно поставить дважды только в один день недели',
+  'subject-day-conflict': 'Математику и Геометрию нельзя ставить одному классу в один день',
   'subject-consecutive': 'этот предмет нельзя ставить подряд в один день (спаренно можно только отмеченным «Подряд»)',
   'school-block': 'подходящие слоты заблокированы (блокировка уроков школы)',
   'teacher-off': 'учитель недоступен: выходной или приход/уход не покрывают слот',
@@ -591,7 +601,7 @@ function diagnoseFailure({ grid, days, periods, lesson, busy, settings, schoolCl
     }
   }
   // Prefer the most informative reason over generic "occupied" when both exist.
-  const order = ['teacher-busy', 'teacher-off', 'teacher-window', 'room-busy', 'difficulty', 'day-full', 'early-only', 'subject-weekly-double-limit', 'subject-pair-required', 'subject-daily-limit', 'subject-consecutive', 'school-block', 'occupied'];
+  const order = ['teacher-busy', 'teacher-off', 'teacher-window', 'room-busy', 'difficulty', 'day-full', 'early-only', 'subject-day-conflict', 'subject-weekly-double-limit', 'subject-pair-required', 'subject-daily-limit', 'subject-consecutive', 'school-block', 'occupied'];
   let best = null;
   for (const code of order) if (tally[code] && (!best || tally[code] > tally[best])) best = code;
   // if a specific (non-occupied) reason blocks at least a quarter of slots, prefer it
