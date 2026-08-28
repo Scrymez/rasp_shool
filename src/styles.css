@@ -1399,6 +1399,16 @@ output {
   font-size: 12px;
 }
 
+.free-slot.swap-slot {
+  background: rgba(231, 191, 103, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(231, 191, 103, 0.32);
+}
+
+.free-slot.swap-slot:hover {
+  background: rgba(231, 191, 103, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(231, 191, 103, 0.6);
+}
+
 .conflict-hint {
   color: var(--muted);
   font-size: 13px;

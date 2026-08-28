@@ -1665,6 +1665,80 @@ function slotSchoolBlocked(blocks, dayId, periodNumber, shift, classId) {
   ));
 }
 
+// Is this teacher already teaching in ANOTHER class at day+period (same shift)?
+function teacherBusyElsewhere(schedule, className, week, teacherId, teacherName, dayId, periodNumber) {
+  const shift = schedule.classMeta?.[className]?.shift || 'morning';
+  for (const [otherName, weeks] of Object.entries(schedule.classes || {})) {
+    if (otherName === className) continue;
+    if ((schedule.classMeta?.[otherName]?.shift || 'morning') !== shift) continue;
+    const other = weeks?.[week]?.[dayId]?.[periodNumber];
+    if (!other) continue;
+    const same = teacherId != null && other.teacherId != null
+      ? teacherId === other.teacherId
+      : Boolean(teacherName) && teacherName === other.teacher;
+    if (same) return true;
+  }
+  return false;
+}
+
+// Validate a lesson (subject/teacher) sitting at day+period given the day's
+// resulting cells: subject once-per-day, math-family exclusivity, early-only,
+// teacher window, school block, and cross-class teacher busy.
+function placementValid(schedule, state, className, week, cell, dayId, periodNumber, resultingDay, grade) {
+  const meta = schedule.classMeta?.[className] || {};
+  const shift = meta.shift || 'morning';
+  const subject = cell.subject;
+  const subjLower = String(subject || '').trim().toLowerCase();
+  if ((grade === 5 || grade === 6) && (subjLower === 'математика' || subjLower === 'русский язык') && periodNumber > 4) return false;
+  const sameSubject = Object.values(resultingDay).filter((c) => c?.subject === subject).length;
+  if (sameSubject > 1) return false;
+  if (MATH_FAMILY.includes(subject)) {
+    const family = new Set(Object.values(resultingDay).filter((c) => MATH_FAMILY.includes(c?.subject)).map((c) => c.subject));
+    if (family.size > 1) return false;
+  }
+  if (teacherBlockedByWindow(state.teacherAvailability, cell.teacherId, dayId, periodNumber, shift)) return false;
+  if (slotSchoolBlocked(state.scheduleBlocks, dayId, periodNumber, shift, meta.id)) return false;
+  if (teacherBusyElsewhere(schedule, className, week, cell.teacherId, cell.teacher, dayId, periodNumber)) return false;
+  return true;
+}
+
+// Lessons in THIS class that the conflicting lesson can swap with so that BOTH
+// lessons land conflict-free (for both teachers, in this class and the classes
+// where those teachers also teach).
+function findSwapCandidatesForCell(schedule, state, className, week, srcDayId, srcPeriod) {
+  const grid = schedule.classes?.[className]?.[week] || {};
+  const L = grid[srcDayId]?.[srcPeriod];
+  if (!L) return [];
+  const grade = parseInt(String(className), 10);
+  const out = [];
+  for (const day of schedule.days) {
+    for (const period of schedule.periods) {
+      if (day.id === srcDayId && period.number === srcPeriod) continue;
+      const M = grid[day.id]?.[period.number];
+      if (!M) continue; // occupied partner only (empty handled by free slots)
+      const sameDay = day.id === srcDayId;
+      // Resulting day cells after swapping L (src) and M (this slot).
+      const dayForL = { ...(grid[day.id] || {}) };
+      dayForL[period.number] = L;
+      const dayForM = { ...(grid[srcDayId] || {}) };
+      dayForM[srcPeriod] = M;
+      if (sameDay) {
+        // One shared day: apply both moves to a single map.
+        const merged = { ...(grid[srcDayId] || {}) };
+        merged[srcPeriod] = M;
+        merged[period.number] = L;
+        if (!placementValid(schedule, state, className, week, L, day.id, period.number, merged, grade)) continue;
+        if (!placementValid(schedule, state, className, week, M, srcDayId, srcPeriod, merged, grade)) continue;
+      } else {
+        if (!placementValid(schedule, state, className, week, L, day.id, period.number, dayForL, grade)) continue;
+        if (!placementValid(schedule, state, className, week, M, srcDayId, srcPeriod, dayForM, grade)) continue;
+      }
+      out.push({ dayId: day.id, dayName: day.name, periodNumber: period.number, subject: M.subject, teacher: M.teacher });
+    }
+  }
+  return out;
+}
+
 // Valid empty slots in THIS class where the cell's teacher+subject can move
 // without a conflict: teacher free elsewhere, inside the teacher's window,
 // not school-blocked, and respecting subject-per-day and math-family rules.
@@ -1795,7 +1869,8 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
     const cell = grid[dayId]?.[periodNumber];
     const dayName = schedule.days.find((d) => d.id === dayId)?.name || dayId;
     const freeSlots = findFreeSlotsForCell(schedule, state, className, safeWeek, dayId, periodNumber);
-    setConflictModal({ dayId, periodNumber, dayName, cell, conflicts, freeSlots });
+    const swapCandidates = findSwapCandidatesForCell(schedule, state, className, safeWeek, dayId, periodNumber);
+    setConflictModal({ dayId, periodNumber, dayName, cell, conflicts, freeSlots, swapCandidates });
   }
   // Move the conflicting lesson to a chosen free slot (swap with the empty target).
   async function moveToFreeSlot(target) {
@@ -1813,6 +1888,23 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
     setLastMove(null);
     setConflictModal(null);
     setNotice(`Урок перемещён: ${target.dayName}, урок №${target.periodNumber}`);
+  }
+  // Swap the conflicting lesson with a chosen partner lesson (both stay conflict-free).
+  async function swapWith(target) {
+    if (!conflictModal) return;
+    const result = await api(`/schedules/${schedule.id}/swap`, {
+      method: 'POST',
+      body: {
+        className,
+        week: safeWeek,
+        from: { dayId: conflictModal.dayId, periodNumber: conflictModal.periodNumber },
+        to: { dayId: target.dayId, periodNumber: target.periodNumber }
+      }
+    });
+    setSchedule({ id: schedule.id, ...result.schedule });
+    setLastMove(null);
+    setConflictModal(null);
+    setNotice(`Обмен: ${conflictModal.cell?.subject} ↔ ${target.subject} (${target.dayName}, урок №${target.periodNumber})`);
   }
   return (
     <div className="schedule-preview">
@@ -1968,9 +2060,29 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
                 </p>
               )}
             </div>
+            <div className="conflict-free">
+              <span className="conflict-tag">Обмен уроками без конфликта (в этом классе)</span>
+              {conflictModal.swapCandidates?.length ? (
+                <div className="free-slot-grid">
+                  {conflictModal.swapCandidates.map((slot) => (
+                    <button className="free-slot swap-slot" key={`swap-${slot.dayId}-${slot.periodNumber}`}
+                      onClick={() => swapWith(slot)}
+                      title="Поменять уроки местами">
+                      <b>{slot.subject}</b>
+                      <span>{slot.teacher}</span>
+                      <span>{slot.dayName}, урок №{slot.periodNumber} · {periodTime(schedule, classLevel, classShift, slot.periodNumber)}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="conflict-hint no-slots">
+                  Нет уроков для безопасного обмена (проверены оба учителя и правила дня).
+                </p>
+              )}
+            </div>
             <p className="conflict-hint">
-              Нажмите свободное окно выше, чтобы перенести урок. Либо переместите
-              конфликтующий урок в другом классе — «!» исчезнет автоматически.
+              Нажмите свободное окно или обмен выше. Либо переместите конфликтующий
+              урок в другом классе — «!» исчезнет автоматически.
             </p>
             <div className="segmented">
               <button className="primary" onClick={revertMove} disabled={!revertable}
