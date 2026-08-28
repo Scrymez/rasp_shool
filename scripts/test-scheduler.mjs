@@ -76,4 +76,21 @@ for (const { id } of days) {
   assert.ok(!(subjects.includes('Математика') && subjects.includes('Геометрия')), 'Математика и Геометрия не должны стоять в один день');
 }
 
-console.log(JSON.stringify({ ok: true, grade6Days, grade5Days, mathGeometryDiagnostics: mathGeometry.diagnostics.length }));
+// Real grade 7-9 case: Алгебра + Геометрия must also be on different days.
+const algebraGeometry = generateSchedule({
+  classes: [grade7Class],
+  assignments: [
+    { classId: 7, subjectName: 'Алгебра', difficulty: 5, weeklyHours: 3, paired: 0 },
+    { classId: 7, subjectName: 'Геометрия', difficulty: 5, weeklyHours: 2, paired: 0 }
+  ],
+  settings,
+  classIds: [7],
+  weekMode: 'one'
+});
+const algebraGeometryGrid = algebraGeometry.classes['7А'].single;
+for (const { id } of days) {
+  const subjects = Object.values(algebraGeometryGrid[id]).filter(Boolean).map((cell) => cell.subject);
+  assert.ok(!(subjects.includes('Алгебра') && subjects.includes('Геометрия')), 'Алгебра и Геометрия не должны стоять в один день');
+}
+
+console.log(JSON.stringify({ ok: true, grade6Days, grade5Days, mathGeometryDiagnostics: mathGeometry.diagnostics.length, algebraGeometryDiagnostics: algebraGeometry.diagnostics.length }));

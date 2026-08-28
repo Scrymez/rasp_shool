@@ -555,16 +555,21 @@ function respectsSubjectPlacementRules(grid, grade) {
       if (entries.length === 2 && Math.abs(entries[0].number - entries[1].number) !== 1) return false;
       if (entries.length === 2 && isGrade6RussianDouble({ subjectName }, grade)) grade6RussianDoubleDays += 1;
     }
-    if (bySubject.has('Математика') && bySubject.has('Геометрия')) return false;
+    const mathFamilyPresent = MATH_FAMILY.filter((name) => bySubject.has(name));
+    if (mathFamilyPresent.length >= 2) return false;
   }
   return grade6RussianDoubleDays <= 1;
 }
 
+// Math-family subjects are mutually exclusive within one day for a class:
+// grades 1-6 use «Математика», grades 7-9 split into «Алгебра» + «Геометрия».
+const MATH_FAMILY = ['Математика', 'Алгебра', 'Геометрия'];
+
 function hasMutuallyExclusiveSubject(dayCells, subjectName) {
-  const counterpart = subjectName === 'Математика'
-    ? 'Геометрия'
-    : subjectName === 'Геометрия' ? 'Математика' : null;
-  return counterpart != null && Object.values(dayCells || {}).some((cell) => cell?.subject === counterpart);
+  if (!MATH_FAMILY.includes(subjectName)) return false;
+  return Object.values(dayCells || {}).some(
+    (cell) => cell?.subject && cell.subject !== subjectName && MATH_FAMILY.includes(cell.subject),
+  );
 }
 
 // Math and Russian in grades 5-6 must be on lessons 1-4 only.
@@ -580,7 +585,7 @@ const REASON_TEXT = {
   'subject-daily-limit': 'предмет уже стоит в этот день (обычный предмет — 1 раз в день; 2 раза можно только «Подряд»-предметам, напр. труд)',
   'subject-pair-required': 'второй урок спаренного предмета должен стоять подряд с первым',
   'subject-weekly-double-limit': 'в 6 классе Русский язык можно поставить дважды только в один день недели',
-  'subject-day-conflict': 'Математику и Геометрию нельзя ставить одному классу в один день',
+  'subject-day-conflict': 'Математику, Алгебру и Геометрию нельзя ставить одному классу в один день (не более одного из них в день)',
   'subject-consecutive': 'этот предмет нельзя ставить подряд в один день (спаренно можно только отмеченным «Подряд»)',
   'school-block': 'подходящие слоты заблокированы (блокировка уроков школы)',
   'teacher-off': 'учитель недоступен: выходной или приход/уход не покрывают слот',
