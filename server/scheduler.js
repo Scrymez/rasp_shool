@@ -503,7 +503,9 @@ function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClas
   const sameSubjectPeriods = Object.entries(grid[day.id] || {})
     .filter(([, cell]) => cell?.subject === lesson.subjectName)
     .map(([number]) => Number(number));
-  if (sameSubjectPeriods.length >= 2) return 'subject-daily-limit';
+  // Only "Подряд"-subjects (труд/технология) may be twice a day (consecutive); all others once a day.
+  const dailyLimit = lesson.paired ? 2 : 1;
+  if (sameSubjectPeriods.length >= dailyLimit) return 'subject-daily-limit';
   if (!lesson.paired && sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-consecutive';
   if (isEarlyOnly(lesson.subjectName, schoolClass.grade) && period.number > 4) return 'early-only';
   if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return 'school-block';
@@ -526,7 +528,7 @@ function isEarlyOnly(subjectName, grade) {
 const REASON_TEXT = {
   'occupied': 'нет свободных уроков в сетке класса (все слоты заняты)',
   'early-only': 'Математика/Русский язык в 5–6 классе можно ставить только на 1–4 урок',
-  'subject-daily-limit': 'предмет уже стоит 2 раза в этот день (больше нельзя)',
+  'subject-daily-limit': 'предмет уже стоит в этот день (обычный предмет — 1 раз в день; 2 раза можно только «Подряд»-предметам, напр. труд)',
   'subject-consecutive': 'этот предмет нельзя ставить подряд в один день (спаренно можно только отмеченным «Подряд»)',
   'school-block': 'подходящие слоты заблокированы (блокировка уроков школы)',
   'teacher-off': 'учитель недоступен: выходной или приход/уход не покрывают слот',
