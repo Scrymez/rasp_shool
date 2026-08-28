@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_SUBJECTS } from './fgos.js';
+import { DEFAULT_SUBJECTS, REMOVED_SUBJECT_NAMES } from './fgos.js';
 
 const root = path.resolve(process.env.SCHEDULER_DATA_DIR || process.cwd());
 const dataDir = path.join(root, 'data');
@@ -148,11 +148,23 @@ export function migrate() {
   ensureColumn('class_advisor_assignments', 'shift', 'TEXT');
   ensureColumn('class_advisor_assignments', 'note', "TEXT NOT NULL DEFAULT ''");
   migrateLegacyAdvisors();
+  pruneRemovedSubjects();
   seedSubjects();
   seedAllowedGrades();
   seedSubjectGradeHours();
   seedSettings();
   pruneInvalidAssignments();
+}
+
+function pruneRemovedSubjects() {
+  const deleteSubject = db.prepare('DELETE FROM subjects WHERE lower(name) = lower(?)');
+  const deleteTeacherSubject = db.prepare('DELETE FROM teachers WHERE lower(subject_name) = lower(?)');
+  runTransaction(() => {
+    for (const name of REMOVED_SUBJECT_NAMES) {
+      deleteSubject.run(name);
+      deleteTeacherSubject.run(name);
+    }
+  });
 }
 
 function seedAllowedGrades() {

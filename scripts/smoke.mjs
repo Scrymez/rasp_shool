@@ -1,7 +1,7 @@
 import { db, migrate, runTransaction, allSubjects, allClasses, allTeachers, allRooms, setAdminPassword } from '../server/db.js';
 import { strFromU8, unzipSync } from 'fflate';
 
-const base = 'http://127.0.0.1:4173/api';
+const base = `http://127.0.0.1:${process.env.SCHEDULER_TEST_PORT || 4173}/api`;
 
 migrate();
 setAdminPassword('admin');
@@ -79,8 +79,12 @@ const teachersTemplate = await download('/templates/teachers.xlsx');
 const classesTemplate = await download('/templates/classes.xlsx');
 const advisorsTemplate = await download('/templates/class-advisors.xlsx');
 
-if (allSubjects().length < 30) throw new Error('ФГОС-предметы не загружены');
-if (!health.ok || health.subjects < 30) throw new Error('Health неверный');
+const subjectNames = allSubjects().map((item) => item.name);
+const removedSubjectNames = ['Астрономия', 'Второй иностранный язык', 'Математика: алгебра и начала анализа', 'Математика: геометрия', 'Родная литература', 'Родной язык'];
+if (removedSubjectNames.some((name) => subjectNames.includes(name))) throw new Error('Удалённые предметы остались в системе');
+if (!subjectNames.includes('Родной язык / родная литература')) throw new Error('Объединённый предмет был ошибочно удалён');
+if (allSubjects().length < 25) throw new Error('ФГОС-предметы не загружены');
+if (!health.ok || health.subjects < 25) throw new Error('Health неверный');
 if (allClasses().length !== 2) throw new Error('Классы не созданы');
 if (allTeachers().length !== 2) throw new Error('Учитель/предметы не созданы');
 if (allRooms().length !== 1) throw new Error('Кабинет не создан');

@@ -2,17 +2,12 @@ export const DEFAULT_SUBJECTS = [
   { name: 'Русский язык', levels: ['НОО', 'ООО', 'СОО'], grades: [1,2,3,4,5,6,7,8,9,10,11], difficulty: 5, weeklyHours: 5 },
   { name: 'Литературное чтение', levels: ['НОО'], grades: [1,2,3,4], difficulty: 3, weeklyHours: 4 },
   { name: 'Литература', levels: ['ООО', 'СОО'], grades: [5,6,7,8,9,10,11], difficulty: 4, weeklyHours: 3 },
-  { name: 'Родной язык', levels: ['НОО', 'ООО'], grades: [1,2,3,4,5,6,7,8,9], difficulty: 3, weeklyHours: 1 },
-  { name: 'Родная литература', levels: ['ООО'], grades: [5,6,7,8,9], difficulty: 3, weeklyHours: 1 },
   { name: 'Родной язык / родная литература', levels: ['НОО', 'ООО'], grades: [], allowed: [1,2,3,4,5,6,7,8,9], difficulty: 3, weeklyHours: 1 },
   { name: 'Иностранный язык', levels: ['НОО', 'ООО', 'СОО'], grades: [2,3,4,5,6,7,8,9,10,11], difficulty: 4, weeklyHours: 3 },
-  { name: 'Второй иностранный язык', levels: ['ООО'], grades: [5,6,7,8,9], difficulty: 3, weeklyHours: 1 },
   { name: 'Математика', levels: ['НОО', 'ООО'], grades: [1,2,3,4,5,6], difficulty: 5, weeklyHours: 5 },
   { name: 'Алгебра', levels: ['ООО'], grades: [7,8,9], difficulty: 5, weeklyHours: 3 },
   { name: 'Геометрия', levels: ['ООО'], grades: [7,8,9], difficulty: 5, weeklyHours: 2 },
   { name: 'Вероятность и статистика', levels: ['ООО', 'СОО'], grades: [7,8,9,10,11], difficulty: 4, weeklyHours: 1 },
-  { name: 'Математика: алгебра и начала анализа', levels: ['СОО'], grades: [10,11], difficulty: 5, weeklyHours: 4 },
-  { name: 'Математика: геометрия', levels: ['СОО'], grades: [10,11], difficulty: 5, weeklyHours: 2 },
   { name: 'Окружающий мир', levels: ['НОО'], grades: [1,2,3,4], difficulty: 3, weeklyHours: 2 },
   { name: 'История', levels: ['ООО', 'СОО'], grades: [5,6,7,8,9,10,11], difficulty: 4, weeklyHours: 2 },
   { name: 'Обществознание', levels: ['ООО', 'СОО'], grades: [6,7,8,9,10,11], difficulty: 4, weeklyHours: 1 },
@@ -28,6 +23,15 @@ export const DEFAULT_SUBJECTS = [
   { name: 'Технология', levels: ['НОО', 'ООО'], grades: [1,2,3,4,5,6,7,8,9], difficulty: 2, weeklyHours: 2 },
   { name: 'Физическая культура', levels: ['НОО', 'ООО', 'СОО'], grades: [1,2,3,4,5,6,7,8,9,10,11], difficulty: 1, weeklyHours: 3 },
   { name: 'Основы безопасности и защиты Родины', levels: ['ООО', 'СОО'], grades: [8,9,10,11], difficulty: 3, weeklyHours: 1 },
-  { name: 'Индивидуальный проект', levels: ['СОО'], grades: [10,11], difficulty: 3, weeklyHours: 1 },
-  { name: 'Астрономия', levels: ['СОО'], grades: [11], difficulty: 4, weeklyHours: 1 }
+  { name: 'Индивидуальный проект', levels: ['СОО'], grades: [10,11], difficulty: 3, weeklyHours: 1 }
+];
+
+export const REMOVED_SUBJECT_NAMES = [
+  'Астрономия',
+  'Второй иностранный',
+  'Второй иностранный язык',
+  'Математика: алгебра и начала анализа',
+  'Математика: геометрия',
+  'Родная литература',
+  'Родной язык'
 ];
