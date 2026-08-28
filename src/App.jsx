@@ -1643,6 +1643,81 @@ function findCellConflicts(schedule, className, week, dayId, periodNumber) {
   return conflicts;
 }
 
+const MATH_FAMILY = ['Математика', 'Алгебра', 'Геометрия'];
+
+function teacherBlockedByWindow(availability, teacherId, dayId, periodNumber, shift) {
+  if (teacherId == null) return false;
+  const w = (availability || []).find((a) => Number(a.teacherId) === Number(teacherId) && a.dayId === dayId);
+  if (!w) return false;
+  if (w.dayOff) return true;
+  if (w.fromPeriod != null && periodNumber < w.fromPeriod) return true;
+  if (w.toPeriod != null && periodNumber > w.toPeriod) return true;
+  const wins = Array.isArray(w.windows) ? w.windows : (w.windows?.[shift] || []);
+  return wins.includes(periodNumber);
+}
+
+function slotSchoolBlocked(blocks, dayId, periodNumber, shift, classId) {
+  return (blocks || []).some((b) => (
+    b.dayId === dayId &&
+    (!b.shift || b.shift === shift) &&
+    (b.classId == null || b.classId === classId) &&
+    b.periodNumber === periodNumber
+  ));
+}
+
+// Valid empty slots in THIS class where the cell's teacher+subject can move
+// without a conflict: teacher free elsewhere, inside the teacher's window,
+// not school-blocked, and respecting subject-per-day and math-family rules.
+function findFreeSlotsForCell(schedule, state, className, week, srcDayId, srcPeriod) {
+  const grid = schedule.classes?.[className]?.[week] || {};
+  const cell = grid[srcDayId]?.[srcPeriod];
+  if (!cell) return [];
+  const meta = schedule.classMeta?.[className] || {};
+  const shift = meta.shift || 'morning';
+  const classId = meta.id;
+  const grade = parseInt(String(className), 10);
+  const subject = cell.subject;
+  const subjLower = String(subject || '').trim().toLowerCase();
+  const isEarlyOnly = (grade === 5 || grade === 6) && (subjLower === 'математика' || subjLower === 'русский язык');
+  const inMathFamily = MATH_FAMILY.includes(subject);
+  const availability = state.teacherAvailability;
+  const blocks = state.scheduleBlocks;
+  const out = [];
+  for (const day of schedule.days) {
+    // Subjects already on the target day (excluding the moved cell if same day).
+    const daySubjects = Object.entries(grid[day.id] || {})
+      .filter(([number]) => !(day.id === srcDayId && Number(number) === srcPeriod))
+      .map(([, c]) => c?.subject)
+      .filter(Boolean);
+    const dayHasSameSubject = daySubjects.includes(subject);
+    const dayHasOtherMath = inMathFamily && daySubjects.some((s) => s !== subject && MATH_FAMILY.includes(s));
+    for (const period of schedule.periods) {
+      if (day.id === srcDayId && period.number === srcPeriod) continue;
+      if (grid[day.id]?.[period.number]) continue; // must be empty
+      if (isEarlyOnly && period.number > 4) continue;
+      if (dayHasSameSubject) continue;
+      if (dayHasOtherMath) continue;
+      if (teacherBlockedByWindow(availability, cell.teacherId, day.id, period.number, shift)) continue;
+      if (slotSchoolBlocked(blocks, day.id, period.number, shift, classId)) continue;
+      // Teacher busy in another class at this day+period (same shift)?
+      let teacherBusy = false;
+      for (const [otherName, weeks] of Object.entries(schedule.classes || {})) {
+        if (otherName === className) continue;
+        if ((schedule.classMeta?.[otherName]?.shift || 'morning') !== shift) continue;
+        const other = weeks?.[week]?.[day.id]?.[period.number];
+        if (!other) continue;
+        const sameTeacher = cell.teacherId != null && other.teacherId != null
+          ? cell.teacherId === other.teacherId
+          : Boolean(cell.teacher) && cell.teacher === other.teacher;
+        if (sameTeacher) { teacherBusy = true; break; }
+      }
+      if (teacherBusy) continue;
+      out.push({ dayId: day.id, dayName: day.name, periodNumber: period.number });
+    }
+  }
+  return out;
+}
+
 function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
   const classNames = Object.keys(schedule.classes);
   const [className, setClassName] = useState(classNames[0] || '');
@@ -1719,7 +1794,25 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
     if (!conflicts.length) return;
     const cell = grid[dayId]?.[periodNumber];
     const dayName = schedule.days.find((d) => d.id === dayId)?.name || dayId;
-    setConflictModal({ dayId, periodNumber, dayName, cell, conflicts });
+    const freeSlots = findFreeSlotsForCell(schedule, state, className, safeWeek, dayId, periodNumber);
+    setConflictModal({ dayId, periodNumber, dayName, cell, conflicts, freeSlots });
+  }
+  // Move the conflicting lesson to a chosen free slot (swap with the empty target).
+  async function moveToFreeSlot(target) {
+    if (!conflictModal) return;
+    const result = await api(`/schedules/${schedule.id}/swap`, {
+      method: 'POST',
+      body: {
+        className,
+        week: safeWeek,
+        from: { dayId: conflictModal.dayId, periodNumber: conflictModal.periodNumber },
+        to: target
+      }
+    });
+    setSchedule({ id: schedule.id, ...result.schedule });
+    setLastMove(null);
+    setConflictModal(null);
+    setNotice(`Урок перемещён: ${target.dayName}, урок №${target.periodNumber}`);
   }
   return (
     <div className="schedule-preview">
@@ -1853,9 +1946,31 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
                 </div>
               ))}
             </div>
+            <div className="conflict-free">
+              <span className="conflict-tag">
+                Свободные окна для «{conflictModal.cell?.teacher || 'учителя'}» ({conflictModal.cell?.subject})
+              </span>
+              {conflictModal.freeSlots?.length ? (
+                <div className="free-slot-grid">
+                  {conflictModal.freeSlots.map((slot) => (
+                    <button className="free-slot" key={`${slot.dayId}-${slot.periodNumber}`}
+                      onClick={() => moveToFreeSlot(slot)}
+                      title="Переместить урок сюда">
+                      <b>{slot.dayName}</b>
+                      <span>урок №{slot.periodNumber} · {periodTime(schedule, classLevel, classShift, slot.periodNumber)}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="conflict-hint no-slots">
+                  Нет свободных слотов без конфликта в этом классе (учтены окна учителя,
+                  занятость в других классах и правила предметов).
+                </p>
+              )}
+            </div>
             <p className="conflict-hint">
-              Чтобы убрать «!», перенесите этот урок на свободный слот, либо переместите
-              конфликтующий урок в другом классе.
+              Нажмите свободное окно выше, чтобы перенести урок. Либо переместите
+              конфликтующий урок в другом классе — «!» исчезнет автоматически.
             </p>
             <div className="segmented">
               <button className="primary" onClick={revertMove} disabled={!revertable}
