@@ -261,7 +261,7 @@ function tryRelocateToFit(payload, { lesson: L, ctx }, { busy, settings, days, v
             reserveResource({ busy, settings, variant, level, shift, dayId: d2.id, period: p2, lesson: mLesson });
             grid[day.id][period.number] = lessonToCell(L);
             reserveResource({ busy, settings, variant, level, shift, dayId: day.id, period, lesson: L });
-            if (dayLoad(grid, day.id) <= cap && dayLoad(grid, d2.id) <= cap) return true;
+            if (dayLoad(grid, day.id) <= cap && dayLoad(grid, d2.id) <= cap && respectsSubjectPlacementRules(grid, schoolClass.grade)) return true;
             // revert tentative placement
             grid[day.id][period.number] = null;
             releaseResource({ busy, settings, variant, level, shift, dayId: day.id, period, lesson: L });
@@ -499,7 +499,7 @@ function violatesHardRules(args) {
 // Returns a reason code for why this slot can't take the lesson, or null if it can.
 function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClass, shift, variant }) {
   if (grid[day.id]?.[period.number]) return 'occupied';
-  // Same subject: never more than 2 per day; non-paired subjects can't be placed back-to-back.
+  // Same subject: never more than 2 per day. A permitted second lesson must be adjacent.
   const sameSubjectPeriods = Object.entries(grid[day.id] || {})
     .filter(([, cell]) => cell?.subject === lesson.subjectName)
     .map(([number]) => Number(number));
@@ -507,6 +507,8 @@ function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClas
   const canDouble = allowsDailyDouble(lesson, schoolClass.grade);
   const dailyLimit = canDouble ? 2 : 1;
   if (sameSubjectPeriods.length >= dailyLimit) return 'subject-daily-limit';
+  if (canDouble && sameSubjectPeriods.length === 1 && !sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-pair-required';
+  if (isGrade6RussianDouble(lesson, schoolClass.grade) && sameSubjectPeriods.length === 1 && hasSubjectDoubleOnAnotherDay(grid, day.id, lesson.subjectName)) return 'subject-weekly-double-limit';
   if (!canDouble && sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-consecutive';
   if (isEarlyOnly(lesson.subjectName, schoolClass.grade) && period.number > 4) return 'early-only';
   if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return 'school-block';
@@ -523,7 +525,37 @@ function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClas
 // or if it is Русский язык in grade 6 (double lesson allowed there).
 function allowsDailyDouble(lesson, grade) {
   if (lesson.paired) return true;
+  return isGrade6RussianDouble(lesson, grade);
+}
+
+function isGrade6RussianDouble(lesson, grade) {
   return grade === 6 && String(lesson.subjectName || '').trim().toLowerCase() === 'русский язык';
+}
+
+function hasSubjectDoubleOnAnotherDay(grid, currentDayId, subjectName) {
+  return Object.entries(grid).some(([dayId, cells]) => (
+    dayId !== currentDayId && Object.values(cells || {}).filter((cell) => cell?.subject === subjectName).length >= 2
+  ));
+}
+
+function respectsSubjectPlacementRules(grid, grade) {
+  let grade6RussianDoubleDays = 0;
+  for (const cells of Object.values(grid)) {
+    const bySubject = new Map();
+    for (const [number, cell] of Object.entries(cells || {})) {
+      if (!cell?.subject) continue;
+      const entries = bySubject.get(cell.subject) || [];
+      entries.push({ number: Number(number), paired: Boolean(cell.paired) });
+      bySubject.set(cell.subject, entries);
+    }
+    for (const [subjectName, entries] of bySubject) {
+      const canDouble = entries.some((entry) => entry.paired) || isGrade6RussianDouble({ subjectName }, grade);
+      if (entries.length > (canDouble ? 2 : 1)) return false;
+      if (entries.length === 2 && Math.abs(entries[0].number - entries[1].number) !== 1) return false;
+      if (entries.length === 2 && isGrade6RussianDouble({ subjectName }, grade)) grade6RussianDoubleDays += 1;
+    }
+  }
+  return grade6RussianDoubleDays <= 1;
 }
 
 // Math and Russian in grades 5-6 must be on lessons 1-4 only.
@@ -537,6 +569,8 @@ const REASON_TEXT = {
   'occupied': 'нет свободных уроков в сетке класса (все слоты заняты)',
   'early-only': 'Математика/Русский язык в 5–6 классе можно ставить только на 1–4 урок',
   'subject-daily-limit': 'предмет уже стоит в этот день (обычный предмет — 1 раз в день; 2 раза можно только «Подряд»-предметам, напр. труд)',
+  'subject-pair-required': 'второй урок спаренного предмета должен стоять подряд с первым',
+  'subject-weekly-double-limit': 'в 6 классе Русский язык можно поставить дважды только в один день недели',
   'subject-consecutive': 'этот предмет нельзя ставить подряд в один день (спаренно можно только отмеченным «Подряд»)',
   'school-block': 'подходящие слоты заблокированы (блокировка уроков школы)',
   'teacher-off': 'учитель недоступен: выходной или приход/уход не покрывают слот',
@@ -557,7 +591,7 @@ function diagnoseFailure({ grid, days, periods, lesson, busy, settings, schoolCl
     }
   }
   // Prefer the most informative reason over generic "occupied" when both exist.
-  const order = ['teacher-busy', 'teacher-off', 'teacher-window', 'room-busy', 'difficulty', 'day-full', 'early-only', 'subject-daily-limit', 'subject-consecutive', 'school-block', 'occupied'];
+  const order = ['teacher-busy', 'teacher-off', 'teacher-window', 'room-busy', 'difficulty', 'day-full', 'early-only', 'subject-weekly-double-limit', 'subject-pair-required', 'subject-daily-limit', 'subject-consecutive', 'school-block', 'occupied'];
   let best = null;
   for (const code of order) if (tally[code] && (!best || tally[code] > tally[best])) best = code;
   // if a specific (non-occupied) reason blocks at least a quarter of slots, prefer it
@@ -775,12 +809,13 @@ function scheduleScore(payload) {
 
 function repeatedSubjects(payload) {
   let total = 0;
-  for (const classWeeks of Object.values(payload.classes)) {
+  for (const [className, classWeeks] of Object.entries(payload.classes)) {
+    const grade = gradeFromKey(className);
     for (const grid of Object.values(classWeeks)) {
       for (const day of payload.days) {
         const counts = new Map();
         for (const cell of Object.values(grid[day.id] || {})) {
-          if (!cell?.subject || cell.paired) continue;
+          if (!cell?.subject || cell.paired || isGrade6RussianDouble({ subjectName: cell.subject }, grade)) continue;
           counts.set(cell.subject, (counts.get(cell.subject) || 0) + 1);
         }
         for (const count of counts.values()) if (count > 1) total += count - 1;

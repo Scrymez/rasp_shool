@@ -1,6 +1,6 @@
 {
   "name": "amanat-scheduler",
-  "version": "0.1.32",
+  "version": "0.1.33",
   "description": "Аманат Расписание — desktop-приложение для автоматического создания школьного расписания",
   "author": "Латипов Саид Ахмедович",
   "private": true,
@@ -17,6 +17,7 @@
     "dist:win": "npm run build && npm run desktop:assets && electron-builder --win nsis --x64",
     "dist:win:portable": "npm run build && npm run desktop:assets && electron-builder --win portable --x64",
     "release:win": "npm run build && npm run desktop:assets && electron-builder --win nsis --x64 --publish never",
+    "test:scheduler": "node scripts/test-scheduler.mjs",
     "test:smoke": "node scripts/smoke.mjs"
   },
   "build": {
