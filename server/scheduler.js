@@ -503,10 +503,11 @@ function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClas
   const sameSubjectPeriods = Object.entries(grid[day.id] || {})
     .filter(([, cell]) => cell?.subject === lesson.subjectName)
     .map(([number]) => Number(number));
-  // Only "Подряд"-subjects (труд/технология) may be twice a day (consecutive); all others once a day.
-  const dailyLimit = lesson.paired ? 2 : 1;
+  // Only «Подряд»-subjects (труд) and 6 класс Русский язык may be twice a day (consecutive); others once.
+  const canDouble = allowsDailyDouble(lesson, schoolClass.grade);
+  const dailyLimit = canDouble ? 2 : 1;
   if (sameSubjectPeriods.length >= dailyLimit) return 'subject-daily-limit';
-  if (!lesson.paired && sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-consecutive';
+  if (!canDouble && sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-consecutive';
   if (isEarlyOnly(lesson.subjectName, schoolClass.grade) && period.number > 4) return 'early-only';
   if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return 'school-block';
   if (isTeacherUnavailable(settings, lesson.teacherId, day.id, period.number, shift)) return 'teacher-off';
@@ -516,6 +517,13 @@ function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClas
   if (dayLoad(grid, day.id) >= maxLessons(settings, schoolClass.grade)) return 'day-full';
   if (dayDifficulty(grid, day.id) + lesson.difficulty > maxDailyDifficulty(settings, schoolClass.grade)) return 'difficulty';
   return null;
+}
+
+// A subject may occupy two consecutive lessons in one day if it is flagged «Подряд» (труд),
+// or if it is Русский язык in grade 6 (double lesson allowed there).
+function allowsDailyDouble(lesson, grade) {
+  if (lesson.paired) return true;
+  return grade === 6 && String(lesson.subjectName || '').trim().toLowerCase() === 'русский язык';
 }
 
 // Math and Russian in grades 5-6 must be on lessons 1-4 only.
@@ -569,9 +577,10 @@ function slotScore({ grid, days, day, period, periods, lesson, settings, schoolC
   const sameSubjectPeriodsToday = Object.entries(grid[day.id] || {})
     .filter(([, cell]) => cell?.subject === lesson.subjectName)
     .map(([number]) => Number(number));
-  const repeatPenalty = lesson.paired ? 0 : (sameSubjectPeriodsToday.length ? 80 : 0);
-  const spreadPenalty = lesson.paired ? 0 : sameSubjectNearDays(grid, days, day.id, lesson.subjectName) * 16;
-  const pairPenalty = pairAdjacencyPenalty(lesson, sameSubjectPeriodsToday, period.number);
+  const dbl = allowsDailyDouble(lesson, schoolClass.grade);
+  const repeatPenalty = dbl ? 0 : (sameSubjectPeriodsToday.length ? 80 : 0);
+  const spreadPenalty = dbl ? 0 : sameSubjectNearDays(grid, days, day.id, lesson.subjectName) * 16;
+  const pairPenalty = dbl ? pairAdjacencyPenalty({ paired: true }, sameSubjectPeriodsToday, period.number) : 0;
   const periodPenalty = preferredPeriodPenalty(period.number, lesson.difficulty);
   const gapPenalty = classWindowCount(projectedGrid) * (strategy.name === 'compact' ? 32 : 20);
   const leadingGapPenalty = leadingEmptyBefore(grid, periods, day.id, period.number, settings, shift, schoolClass) * 26;
