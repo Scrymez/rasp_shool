@@ -1,6 +1,6 @@
 {
   "name": "amanat-scheduler",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "description": "Аманат Расписание — desktop-приложение для автоматического создания школьного расписания",
   "author": "Латипов Саид Ахмедович",
   "private": true,

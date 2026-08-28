@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import {
   BarChart3, BookOpen, CalendarDays, Check, ChevronRight, Database, Download, FileDown, FileSpreadsheet,
   DoorOpen, FolderOpen, KeyRound, MoonStar, Pencil, Play, Plus, Printer, Save, SaveAll, School,
-  RefreshCw, Search, ShieldCheck, Sparkles, Trash2, Upload, Users, X
+  RefreshCw, Search, ShieldCheck, Sparkles, Trash2, Upload, Users, X, AlertTriangle
 } from 'lucide-react';
 import './styles.css';
 
@@ -1614,6 +1614,35 @@ function Generate({ state, selectedClasses, setSelectedClasses, weekMode, setWee
   );
 }
 
+// Live cross-class conflicts for one cell: same shift, same day+period, another class.
+// Reports the teacher double-book (and room clash) with the class and lesson number where busy.
+function findCellConflicts(schedule, className, week, dayId, periodNumber) {
+  const cell = schedule.classes?.[className]?.[week]?.[dayId]?.[periodNumber];
+  if (!cell) return [];
+  const shift = schedule.classMeta?.[className]?.shift || 'morning';
+  const dayName = schedule.days?.find((d) => d.id === dayId)?.name || dayId;
+  const conflicts = [];
+  for (const [otherName, weeks] of Object.entries(schedule.classes || {})) {
+    if (otherName === className) continue;
+    if ((schedule.classMeta?.[otherName]?.shift || 'morning') !== shift) continue;
+    const other = weeks?.[week]?.[dayId]?.[periodNumber];
+    if (!other) continue;
+    const sameTeacher = cell.teacherId != null && other.teacherId != null
+      ? cell.teacherId === other.teacherId
+      : Boolean(cell.teacher) && cell.teacher === other.teacher;
+    if (sameTeacher) {
+      conflicts.push({ kind: 'teacher', className: otherName, dayName, periodNumber, subject: other.subject, teacher: other.teacher, room: other.room });
+    }
+    const sameRoom = cell.roomId != null && other.roomId != null
+      ? cell.roomId === other.roomId
+      : Boolean(cell.room) && cell.room === other.room;
+    if (sameRoom) {
+      conflicts.push({ kind: 'room', className: otherName, dayName, periodNumber, subject: other.subject, teacher: other.teacher, room: other.room });
+    }
+  }
+  return conflicts;
+}
+
 function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
   const classNames = Object.keys(schedule.classes);
   const [className, setClassName] = useState(classNames[0] || '');
@@ -1621,6 +1650,8 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
   const [weekName, setWeekName] = useState(weekNames[0] || '');
   const [edit, setEdit] = useState(null);
   const [draggedCell, setDraggedCell] = useState(null);
+  const [conflictModal, setConflictModal] = useState(null);
+  const [lastMove, setLastMove] = useState(null);
   if (!className) return null;
   const safeWeek = schedule.classes[className]?.[weekName] ? weekName : weekNames[0];
   const grid = schedule.classes[className][safeWeek];
@@ -1650,13 +1681,45 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
   }
   async function swapCell(target) {
     if (!draggedCell) return;
+    const origin = draggedCell;
+    if (origin.dayId === target.dayId && origin.periodNumber === target.periodNumber) {
+      setDraggedCell(null);
+      return;
+    }
     const result = await api(`/schedules/${schedule.id}/swap`, {
       method: 'POST',
-      body: { className, week: safeWeek, from: draggedCell, to: target }
+      body: { className, week: safeWeek, from: origin, to: target }
+    });
+    const next = { id: schedule.id, ...result.schedule };
+    setSchedule(next);
+    setDraggedCell(null);
+    const conflicts = findCellConflicts(next, className, safeWeek, target.dayId, target.periodNumber);
+    if (conflicts.length) {
+      setLastMove({ from: origin, to: target });
+      setNotice('Конфликт при перестановке — нажмите «!» на ячейке для деталей');
+    } else {
+      setLastMove(null);
+      setNotice('Уроки переставлены');
+    }
+  }
+  // Undo the last conflicting swap (return lessons to their places).
+  async function revertMove() {
+    if (!lastMove) return;
+    const result = await api(`/schedules/${schedule.id}/swap`, {
+      method: 'POST',
+      body: { className, week: safeWeek, from: lastMove.to, to: lastMove.from }
     });
     setSchedule({ id: schedule.id, ...result.schedule });
-    setDraggedCell(null);
-    setNotice('Уроки переставлены');
+    setLastMove(null);
+    setConflictModal(null);
+    setNotice('Урок возвращён на место');
+  }
+  function openConflict(dayId, periodNumber) {
+    const conflicts = findCellConflicts(schedule, className, safeWeek, dayId, periodNumber);
+    if (!conflicts.length) return;
+    const cell = grid[dayId]?.[periodNumber];
+    const dayName = schedule.days.find((d) => d.id === dayId)?.name || dayId;
+    setConflictModal({ dayId, periodNumber, dayName, cell, conflicts });
   }
   return (
     <div className="schedule-preview">
@@ -1684,24 +1747,33 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
             <b>{day.name}</b>
             {schedule.periods.map((period) => {
               const cell = grid[day.id]?.[period.number];
+              const conflicts = cell ? findCellConflicts(schedule, className, safeWeek, day.id, period.number) : [];
               return (
-                <button className="cell-button" key={period.number} onClick={() => setEdit({
-                  dayId: day.id,
-                  dayName: day.name,
-                  periodNumber: period.number,
-                  subject: cell?.subject || '',
-                  teacher: cell?.teacher || '',
-                  teacherId: cell?.teacherId || '',
-                  room: cell?.room || '',
-                  roomId: cell?.roomId || '',
-                  difficulty: cell?.difficulty || 3
-                })}
-                draggable
-                onDragStart={() => setDraggedCell({ dayId: day.id, periodNumber: period.number })}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={() => swapCell({ dayId: day.id, periodNumber: period.number })}>
+                <div className={`cell-button${conflicts.length ? ' cell-conflict' : ''}`} key={period.number}
+                  role="button" tabIndex={0}
+                  onClick={() => setEdit({
+                    dayId: day.id,
+                    dayName: day.name,
+                    periodNumber: period.number,
+                    subject: cell?.subject || '',
+                    teacher: cell?.teacher || '',
+                    teacherId: cell?.teacherId || '',
+                    room: cell?.room || '',
+                    roomId: cell?.roomId || '',
+                    difficulty: cell?.difficulty || 3
+                  })}
+                  draggable
+                  onDragStart={() => setDraggedCell({ dayId: day.id, periodNumber: period.number })}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={() => swapCell({ dayId: day.id, periodNumber: period.number })}>
+                  {conflicts.length > 0 && (
+                    <span className="conflict-badge" title="Конфликт — нажмите для деталей"
+                      onClick={(event) => { event.stopPropagation(); openConflict(day.id, period.number); }}>
+                      <AlertTriangle size={14} />
+                    </span>
+                  )}
                   {cell ? <><strong>{cell.subject}</strong><small>{cell.teacher}</small><small>{cell.room}</small></> : '—'}
-                </button>
+                </div>
               );
             })}
           </React.Fragment>
@@ -1742,6 +1814,59 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
           </div>
         </div>
       )}
+      {conflictModal && (() => {
+        const revertable = lastMove
+          && lastMove.to.dayId === conflictModal.dayId
+          && lastMove.to.periodNumber === conflictModal.periodNumber;
+        return (
+          <ModalFrame label="Конфликт расписания" className="conflict-modal" onClose={() => setConflictModal(null)}>
+            <div className="conflict-head">
+              <AlertTriangle size={22} />
+              <h3>Конфликт при перестановке</h3>
+            </div>
+            <p className="conflict-slot">
+              <b>{className}</b> · {conflictModal.dayName}, урок №{conflictModal.periodNumber}
+            </p>
+            {conflictModal.cell && (
+              <div className="conflict-current">
+                <span className="conflict-tag">Перемещённый урок</span>
+                <b>{conflictModal.cell.subject}</b>
+                <span>{conflictModal.cell.teacher || 'учитель не задан'}</span>
+                {conflictModal.cell.room && <span>каб. {conflictModal.cell.room}</span>}
+              </div>
+            )}
+            <div className="conflict-list">
+              {conflictModal.conflicts.map((c, index) => (
+                <div className={`conflict-item ${c.kind}`} key={index}>
+                  {c.kind === 'teacher' ? (
+                    <p>
+                      Учитель <b>{c.teacher}</b> уже ведёт урок в классе <b>{c.className}</b> —
+                      {' '}{c.dayName}, урок №<b>{c.periodNumber}</b> ({c.subject}
+                      {c.room ? `, каб. ${c.room}` : ''}).
+                    </p>
+                  ) : (
+                    <p>
+                      Кабинет <b>{c.room}</b> занят классом <b>{c.className}</b> —
+                      {' '}{c.dayName}, урок №<b>{c.periodNumber}</b> ({c.subject}).
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="conflict-hint">
+              Чтобы убрать «!», перенесите этот урок на свободный слот, либо переместите
+              конфликтующий урок в другом классе.
+            </p>
+            <div className="segmented">
+              <button className="primary" onClick={revertMove} disabled={!revertable}
+                title={revertable ? '' : 'Автовозврат доступен только сразу после перестановки'}>
+                Отмена (вернуть на место)
+              </button>
+              <button onClick={() => { setLastMove(null); setConflictModal(null); }}>Подтвердить</button>
+            </div>
+          </ModalFrame>
+        );
+      })()}
     </div>
   );
 }
