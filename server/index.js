@@ -799,10 +799,13 @@ app.get('/api/export/constraints.xlsx', (_req, res) => {
   const teacherName = new Map(allTeachers().map((t) => [t.id, t.fullName]));
   const dayName = new Map((json.get('days') || []).map((d) => [d.id, d.name]));
   const classById = new Map(allClasses().map((c) => [c.id, `${c.grade}${c.letter}`]));
+  const dayOrder = new Map((json.get('days') || []).map((d, i) => [d.id, i]));
   const availRows = allTeacherAvailability()
     .slice()
-    .sort((a, b) => (teacherName.get(a.teacherId) || '').localeCompare(teacherName.get(b.teacherId) || '', 'ru'));
+    .sort((a, b) => (teacherName.get(a.teacherId) || '').localeCompare(teacherName.get(b.teacherId) || '', 'ru')
+      || (dayOrder.get(a.dayId) ?? 99) - (dayOrder.get(b.dayId) ?? 99));
   const availabilitySheet = [['Учитель', 'День', 'Режим', 'Приходит с урока', 'Уходит после урока', 'Окна 1 смена', 'Окна 2 смена']];
+  const availKeys = [];
   for (const r of availRows) {
     availabilitySheet.push([
       teacherName.get(r.teacherId) || `id ${r.teacherId}`,
@@ -813,7 +816,9 @@ app.get('/api/export/constraints.xlsx', (_req, res) => {
       (r.windows?.morning || []).join(', '),
       (r.windows?.afternoon || []).join(', ')
     ]);
+    availKeys.push(r.teacherId);
   }
+  const availMerges = mergeFirstColumn(availabilitySheet, availKeys);
   const blocksSheet = [['День', 'Смена', 'Класс', 'Урок', 'Причина']];
   for (const b of allScheduleBlocks()) {
     blocksSheet.push([
@@ -825,10 +830,31 @@ app.get('/api/export/constraints.xlsx', (_req, res) => {
     ]);
   }
   sendXlsx(res, 'Ограничения-и-доступность.xlsx', [
-    { name: 'Доступность учителей', rows: availabilitySheet },
+    { name: 'Доступность учителей', rows: availabilitySheet, merges: availMerges },
     { name: 'Блокировки школы', rows: blocksSheet }
   ]);
 });
+
+// Vertically merge the first (A) column across consecutive rows that share the
+// same key, blanking the repeats so a name shows once per block. `rows` includes
+// the header at index 0; `keys[i]` is the group key for data row i+1.
+function mergeFirstColumn(rows, keys) {
+  const merges = [];
+  const n = keys.length; // data rows live at rows[1..n]; keys[r-1] is the key of rows[r]
+  let start = 1;
+  for (let r = 2; r <= n + 1; r += 1) {
+    const endBlock = r === n + 1 || keys[r - 1] !== keys[start - 1];
+    if (endBlock) {
+      const end = r - 1;
+      if (end > start) {
+        merges.push(`A${start + 1}:A${end + 1}`);
+        for (let j = start + 1; j <= end; j += 1) rows[j][0] = '';
+      }
+      start = r;
+    }
+  }
+  return merges;
+}
 
 // Auto-generated improvement tips from the finished schedule.
 function buildRecommendations(p, issues) {
@@ -1955,7 +1981,7 @@ function reportSheets(reports) {
   return [
     { name: 'Учителя', rows: [['Учитель', 'Часы', 'Предметы', 'Классы'], ...reports.teacherRows.map((row) => [row.teacher, row.hours, row.subjects.join(', '), row.classes.join(', ')])] },
     { name: 'Учитель-классы', rows: [['Учитель', 'Класс', 'Предмет', 'Часы', 'Кабинет'], ...reports.teacherRows.flatMap((row) => row.lessons.map((lesson) => [row.teacher, lesson.className, lesson.subject, lesson.hours, lesson.room]))] },
-    { name: 'Расписание учителей', rows: [['Учитель', 'Класс', 'Смена', 'Неделя', 'День', 'Урок', 'Время', 'Предмет', 'Кабинет'], ...reports.teacherScheduleRows.map((row) => [row.teacher, row.className, row.shift, row.week, row.day, row.period, row.time, row.subject, row.room])] },
+    teacherScheduleSheet(reports.teacherScheduleRows),
     { name: 'Классы', rows: [['Класс', 'Уровень', 'Смена', 'Часы', 'Предметов', 'Учителя'], ...reports.classRows.map((row) => [row.className, row.level, row.shift, row.hours, row.subjects, row.teachers.join(', ')])] },
     { name: 'Классы по сменам', rows: [['Смена', 'Класс', 'Уровень образования', 'Параллель', 'Литерал'], ...reports.classesByShiftRows.map((row) => [row.shift, row.className, row.level, row.grade, row.letter])] },
     { name: 'Класс-предметы', rows: [['Класс', 'Предмет', 'Учитель', 'Часы', 'Кабинет'], ...reports.classRows.flatMap((row) => row.lessons.map((lesson) => [row.className, lesson.subject, lesson.teacher, lesson.hours, lesson.room]))] },
@@ -1965,8 +1991,20 @@ function reportSheets(reports) {
   ];
 }
 
+// «Расписание учителей» sheet with the teacher (A) column merged per teacher id.
+function teacherScheduleSheet(scheduleRows) {
+  const rows = [['Учитель', 'Класс', 'Смена', 'Неделя', 'День', 'Урок', 'Время', 'Предмет', 'Кабинет']];
+  const keys = [];
+  for (const row of scheduleRows) {
+    rows.push([row.teacher, row.className, row.shift, row.week, row.day, row.period, row.time, row.subject, row.room]);
+    keys.push(row.mergeKey);
+  }
+  return { name: 'Расписание учителей', rows, merges: mergeFirstColumn(rows, keys) };
+}
+
 function teacherScheduleFromPayload(payload) {
   const rows = [];
+  const dayIndex = new Map((payload.days || []).map((d, i) => [d.id, i]));
   for (const [className, weeks] of Object.entries(payload.classes || {})) {
     const shift = payload.classMeta?.[className]?.shift || 'morning';
     const level = payload.classMeta?.[className]?.level;
@@ -1977,6 +2015,10 @@ function teacherScheduleFromPayload(payload) {
           if (!cell?.teacher || cell.teacher === 'Не назначен') continue;
           rows.push({
             teacher: cell.teacher,
+            // One physical teacher = one block: group by normalized full name
+            // (a person may hold several subject rows / ids). Matches v0.1.40 identity.
+            mergeKey: String(cell.teacher || '').trim().toLowerCase().replace(/\s+/g, ' '),
+            dayIdx: dayIndex.get(day.id) ?? 99,
             className,
             shift: shiftLabel(payload, shift),
             week: weekLabel(week),
@@ -1990,7 +2032,11 @@ function teacherScheduleFromPayload(payload) {
       }
     }
   }
-  return rows.sort((a, b) => a.teacher.localeCompare(b.teacher, 'ru') || classNameSort(a.className, b.className) || a.period - b.period);
+  return rows.sort((a, b) => a.teacher.localeCompare(b.teacher, 'ru')
+    || a.mergeKey.localeCompare(b.mergeKey)
+    || a.dayIdx - b.dayIdx
+    || a.period - b.period
+    || classNameSort(a.className, b.className));
 }
 
 function detectTeacherWindows(payload) {
