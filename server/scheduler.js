@@ -282,6 +282,25 @@ function computeEarlyOverload(assignments, settings, selected) {
 // school blocks, early-only, subject-per-day and SanPiN day limits). A swap is
 // kept only when it is legal AND strictly lowers scheduleScore. Reverting is a
 // plain cell swap back, so no busy-map bookkeeping is needed here.
+const ANNEAL_RESTARTS = 3;
+const ANNEAL_KICK = 3;
+
+// Deterministic PRNG so a given schedule always polishes to the same result.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function next() {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashStr(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i += 1) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+
 function optimizeSchedule(payload, { settings, days, variant }) {
   for (const [key, weeks] of Object.entries(payload.classes)) {
     const grid = weeks[variant];
@@ -291,24 +310,74 @@ function optimizeSchedule(payload, { settings, days, variant }) {
     const classPeriods = timetableFor(settings, meta.level, meta.shift).periods;
     const slots = [];
     for (const day of days) for (const period of classPeriods) slots.push({ day, period });
-    let improved = true;
-    let rounds = 0;
-    while (improved && rounds < 12) {
-      improved = false;
-      rounds += 1;
-      for (const a of slots) {
-        const cellA = grid[a.day.id]?.[a.period.number];
-        if (!cellA) continue;
-        for (const b of slots) {
-          if (a.day.id === b.day.id && a.period.number === b.period.number) continue;
-          if (trySwapImprove(payload, settings, key, meta, grade, variant, grid, days, a, b)) {
-            improved = true;
-            break;
-          }
+    const ctx = { payload, settings, key, meta, grade, variant, grid, days, slots };
+    // Hill-climb, then annealing restarts: kick out of the local minimum with a
+    // few random legal swaps, re-climb, keep the result only if it is better.
+    hillClimb(ctx);
+    let best = snapshotGrid(grid, days);
+    let bestScore = localGridScore(grid, grade, days);
+    const rng = mulberry32(hashStr(`${key}|${variant}`));
+    for (let r = 0; r < ANNEAL_RESTARTS; r += 1) {
+      for (let k = 0; k < ANNEAL_KICK; k += 1) randomLegalSwap(ctx, rng);
+      hillClimb(ctx);
+      const score = localGridScore(grid, grade, days);
+      if (score < bestScore) { bestScore = score; best = snapshotGrid(grid, days); }
+      else restoreGrid(grid, best, days);
+    }
+    restoreGrid(grid, best, days);
+  }
+}
+
+function hillClimb({ payload, settings, key, meta, grade, variant, grid, days, slots }) {
+  let improved = true;
+  let rounds = 0;
+  while (improved && rounds < 12) {
+    improved = false;
+    rounds += 1;
+    for (const a of slots) {
+      const cellA = grid[a.day.id]?.[a.period.number];
+      if (!cellA) continue;
+      for (const b of slots) {
+        if (a.day.id === b.day.id && a.period.number === b.period.number) continue;
+        if (trySwapImprove(payload, settings, key, meta, grade, variant, grid, days, a, b)) {
+          improved = true;
+          break;
         }
       }
     }
   }
+}
+
+// One random legal swap (no score requirement) — used to perturb out of a local minimum.
+function randomLegalSwap({ payload, settings, key, meta, grade, variant, grid, days, slots }, rng) {
+  for (let tries = 0; tries < 14; tries += 1) {
+    const a = slots[Math.floor(rng() * slots.length)];
+    const b = slots[Math.floor(rng() * slots.length)];
+    if (a.day.id === b.day.id && a.period.number === b.period.number) continue;
+    const cellA = grid[a.day.id][a.period.number];
+    if (!cellA) continue;
+    const cellB = grid[b.day.id]?.[b.period.number] || null;
+    grid[a.day.id][a.period.number] = cellB;
+    grid[b.day.id][b.period.number] = cellA;
+    const legal = cellPlaceable(payload, settings, key, meta, grade, variant, cellA, b.day, b.period)
+      && (!cellB || cellPlaceable(payload, settings, key, meta, grade, variant, cellB, a.day, a.period))
+      && respectsSubjectPlacementRules(grid, grade)
+      && dayWithinLimits(grid, settings, grade, a.day.id)
+      && dayWithinLimits(grid, settings, grade, b.day.id);
+    if (legal) return true;
+    grid[a.day.id][a.period.number] = cellA;
+    grid[b.day.id][b.period.number] = cellB;
+  }
+  return false;
+}
+
+function snapshotGrid(grid, days) {
+  const snap = {};
+  for (const day of days) snap[day.id] = { ...(grid[day.id] || {}) };
+  return snap;
+}
+function restoreGrid(grid, snap, days) {
+  for (const day of days) grid[day.id] = { ...(snap[day.id] || {}) };
 }
 
 function trySwapImprove(payload, settings, key, meta, grade, variant, grid, days, a, b) {
