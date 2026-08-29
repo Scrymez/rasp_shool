@@ -258,21 +258,36 @@ function computeEarlyOverload(assignments, settings, selected) {
     if ((grade === 5 || grade === 6) && (subj === 'математика' || subj === 'русский язык')) {
       const key = teacherKeyOf(a.teacherName);
       if (!key) continue;
-      const entry = demand.get(key) || { teacher: a.teacherName, hours: 0 };
+      const entry = demand.get(key) || { teacher: a.teacherName, hours: 0, items: [] };
       entry.hours += Number(a.weeklyHours || 0);
+      entry.items.push({ className: `${a.grade}${a.letter}`, subject: a.subjectName, hours: Number(a.weeklyHours || 0) });
       demand.set(key, entry);
     }
   }
   const out = [];
   for (const [key, entry] of demand) {
     let capacity = 0;
+    const byDay = [];
     for (const day of days) {
+      const free = [];
       for (let p = 1; p <= 4; p += 1) {
         if (!isTeacherUnavailable(settings, key, day.id, p, 'morning')
-          && !isOutsideAvailability(settings, key, day.id, p, 'morning')) capacity += 1;
+          && !isOutsideAvailability(settings, key, day.id, p, 'morning')) { free.push(p); capacity += 1; }
       }
+      const w = (settings.teacherAvailability || []).find((a) => teacherKeyOf(a.teacherName) === key && a.dayId === day.id);
+      byDay.push({ day: day.name, free, dayOff: !!(w && w.dayOff) });
     }
-    if (entry.hours >= capacity) out.push({ teacher: entry.teacher, earlyLessons: entry.hours, earlyCapacity: capacity, deficit: entry.hours - capacity, tight: entry.hours === capacity });
+    if (entry.hours >= capacity) {
+      out.push({
+        teacher: entry.teacher,
+        earlyLessons: entry.hours,
+        earlyCapacity: capacity,
+        deficit: entry.hours - capacity,
+        tight: entry.hours === capacity,
+        items: entry.items.sort((a, b) => a.className.localeCompare(b.className, 'ru')),
+        byDay
+      });
+    }
   }
   return out.sort((a, b) => b.deficit - a.deficit);
 }
