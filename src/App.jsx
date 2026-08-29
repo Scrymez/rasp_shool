@@ -1586,12 +1586,35 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
   );
 }
 
+const GEN_PHASES = [
+  'Расставляем учителей с ограничениями…',
+  'Заполняем предметы по классам…',
+  'Проверяем окна, кабинеты и накладки…',
+  'Причёсываем расписание — убираем окна…'
+];
+
 function Generate({ state, selectedClasses, setSelectedClasses, weekMode, setWeekMode, schedule, setSchedule, setNotice, refresh }) {
+  const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState(0);
+  useEffect(() => {
+    if (!busy) return undefined;
+    setPhase(0);
+    const t = setInterval(() => setPhase((p) => (p + 1) % GEN_PHASES.length), 1500);
+    return () => clearInterval(t);
+  }, [busy]);
   async function create() {
-    const result = await api('/generate', { method: 'POST', body: { classIds: selectedClasses, weekMode } });
-    setSchedule({ id: result.id, ...result.schedule });
-    await refresh();
-    setNotice('Расписание создано');
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await api('/generate', { method: 'POST', body: { classIds: selectedClasses, weekMode } });
+      setSchedule({ id: result.id, ...result.schedule });
+      await refresh();
+      setNotice('Расписание создано');
+    } catch (error) {
+      setNotice(`Ошибка генерации: ${error?.message || error}`);
+    } finally {
+      setBusy(false);
+    }
   }
   async function downloadSchedule(path) {
     await downloadFile(path);
@@ -1619,7 +1642,22 @@ function Generate({ state, selectedClasses, setSelectedClasses, weekMode, setWee
           </label>
         ))}
       </div>
-      <button className="primary" onClick={create}><Sparkles size={18} /> Создать расписание</button>
+      <button className="primary" onClick={create} disabled={busy}>
+        {busy ? <><span className="btn-spinner" aria-hidden="true" /> Создаём…</> : <><Sparkles size={18} /> Создать расписание</>}
+      </button>
+      {busy && createPortal((
+        <div className="gen-loader" role="status" aria-live="polite">
+          <div className="gen-card">
+            <div className="gen-grid" aria-hidden="true">
+              {Array.from({ length: 30 }).map((_, i) => <span key={i} style={{ '--i': i }} />)}
+            </div>
+            <div className="gen-title">Создаём расписание</div>
+            <div className="gen-phase">{GEN_PHASES[phase]}</div>
+            <div className="gen-bar" aria-hidden="true"><i /></div>
+            <div className="gen-note">Не закрывайте окно — идёт расстановка и оптимизация</div>
+          </div>
+        </div>
+      ), document.body)}
       {schedule && <SchedulePreview schedule={schedule} setSchedule={setSchedule} state={state} setNotice={setNotice} />}
       {schedule?.id && (
         <div className="export-row">

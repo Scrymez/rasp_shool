@@ -1399,6 +1399,117 @@ output {
   font-size: 12px;
 }
 
+/* Schedule-generation loader — animation loops for as long as generation runs. */
+.gen-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(9, 11, 17, 0.74);
+  backdrop-filter: blur(6px);
+  animation: genFade 0.2s ease;
+}
+
+@keyframes genFade { from { opacity: 0; } to { opacity: 1; } }
+
+.gen-card {
+  width: min(360px, 90vw);
+  padding: 26px 26px 22px;
+  border-radius: 18px;
+  text-align: center;
+  background: rgba(20, 22, 32, 0.96);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(231, 191, 103, 0.24);
+}
+
+.gen-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+  width: 264px;
+  max-width: 100%;
+  margin: 0 auto 18px;
+}
+
+.gen-grid span {
+  height: 20px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  animation: genFill 1.9s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 0.06s);
+}
+
+@keyframes genFill {
+  0%, 100% { background: rgba(255, 255, 255, 0.06); transform: scale(0.9); }
+  30% { background: linear-gradient(135deg, rgba(231, 191, 103, 0.95), rgba(142, 223, 199, 0.85)); transform: scale(1); }
+  70% { background: linear-gradient(135deg, rgba(231, 191, 103, 0.5), rgba(142, 223, 199, 0.4)); transform: scale(1); }
+}
+
+.gen-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.gen-phase {
+  color: var(--muted);
+  font-size: 13px;
+  min-height: 34px;
+  animation: genFade 0.4s ease;
+}
+
+.gen-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 6px 0 12px;
+}
+
+.gen-bar i {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 42%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(231, 191, 103, 0.95), rgba(142, 223, 199, 0.95));
+  animation: genSlide 1.25s ease-in-out infinite;
+}
+
+@keyframes genSlide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(260%); }
+}
+
+.gen-note {
+  color: var(--muted);
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.btn-spinner {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid rgba(23, 19, 27, 0.35);
+  border-top-color: #17131b;
+  animation: genSpin 0.7s linear infinite;
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+
+@keyframes genSpin { to { transform: rotate(360deg); } }
+
+.primary:disabled {
+  opacity: 0.85;
+  cursor: progress;
+}
+
 .clash-list {
   margin-top: 12px;
   padding: 12px 14px;
