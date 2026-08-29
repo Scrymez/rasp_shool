@@ -251,7 +251,7 @@ function computeEarlyOverload(assignments, settings, selected) {
   const days = (settings.days || []).filter((d) => d.enabled);
   const demand = new Map();
   for (const a of assignments) {
-    if (!selectedIds.has(a.classId)) continue;
+    if (!selectedIds.has(a.classId) || !earlyRuleActive(settings, a.classId)) continue;
     const grade = Number(a.grade);
     const subj = String(a.subjectName || '').trim().toLowerCase();
     if ((grade === 5 || grade === 6) && (subj === 'математика' || subj === 'русский язык')) {
@@ -810,7 +810,7 @@ function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClas
   if (canDouble && sameSubjectPeriods.length === 1 && !sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-pair-required';
   if (isGrade6RussianDouble(lesson, schoolClass.grade) && sameSubjectPeriods.length === 1 && hasSubjectDoubleOnAnotherDay(grid, day.id, lesson.subjectName)) return 'subject-weekly-double-limit';
   if (!canDouble && sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-consecutive';
-  if (settings.rules?.earlyOnlyMathRussian !== false && isEarlyOnly(lesson.subjectName, schoolClass.grade) && period.number > 4) return 'early-only';
+  if (earlyRuleActive(settings, schoolClass.id) && isEarlyOnly(lesson.subjectName, schoolClass.grade) && period.number > 4) return 'early-only';
   if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return 'school-block';
   if (isTeacherUnavailable(settings, lesson.teacherKey, day.id, period.number, shift)) return 'teacher-off';
   if (isOutsideAvailability(settings, lesson.teacherKey, day.id, period.number, shift)) return 'teacher-window';
@@ -869,6 +869,14 @@ function hasMutuallyExclusiveSubject(dayCells, subjectName) {
   return Object.values(dayCells || {}).some(
     (cell) => cell?.subject && cell.subject !== subjectName && MATH_FAMILY.includes(cell.subject),
   );
+}
+
+// The early-only rule (5-6 math/russian on lessons 1-4) is on globally unless the
+// toggle is off, and can be disabled per class via rules.earlyOnlyExceptions (class ids).
+function earlyRuleActive(settings, classId) {
+  if (settings.rules?.earlyOnlyMathRussian === false) return false;
+  const exceptions = settings.rules?.earlyOnlyExceptions || [];
+  return !exceptions.includes(classId);
 }
 
 // Math and Russian in grades 5-6 must be on lessons 1-4 only.

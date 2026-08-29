@@ -559,7 +559,7 @@ app.post('/api/settings', (req, res) => {
 });
 
 function defaultRules() {
-  return { earlyOnlyMathRussian: true };
+  return { earlyOnlyMathRussian: true, earlyOnlyExceptions: [] };
 }
 
 function settingsPayload() {

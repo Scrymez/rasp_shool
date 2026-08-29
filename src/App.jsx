@@ -1086,7 +1086,8 @@ function Assignments({ state, refresh, setNotice, registerCommit }) {
 function Constraints({ state, refresh, setNotice, registerCommit }) {
   const [blocks, setBlocks] = useState(state.scheduleBlocks || []);
   const [availability, setAvailability] = useState(state.teacherAvailability || []);
-  const [rules, setRules] = useState(state.settings.rules || { earlyOnlyMathRussian: true });
+  const [rules, setRules] = useState(state.settings.rules || { earlyOnlyMathRussian: true, earlyOnlyExceptions: [] });
+  const [rulesModal, setRulesModal] = useState(false);
   const uniqueTeachers = useMemo(() => uniqueTeachersByName(state.teachers), [state.teachers]);
   const [availTeacherId, setAvailTeacherId] = useState(uniqueTeachers[0]?.id || '');
   const blocksRef = useRef(null);
@@ -1111,13 +1112,22 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
 
   useEffect(() => setBlocks(state.scheduleBlocks || []), [state.scheduleBlocks]);
   useEffect(() => setAvailability(state.teacherAvailability || []), [state.teacherAvailability]);
-  useEffect(() => setRules(state.settings.rules || { earlyOnlyMathRussian: true }), [state.settings.rules]);
+  useEffect(() => setRules(state.settings.rules || { earlyOnlyMathRussian: true, earlyOnlyExceptions: [] }), [state.settings.rules]);
   async function toggleRule(key, value) {
     const next = { ...rules, [key]: value };
     setRules(next);
     await api('/settings', { method: 'POST', body: { rules: next } });
     await refresh();
     setNotice('Настройка сохранена');
+  }
+  // Toggle the early-only rule for one class (active = rule ON = not in exceptions).
+  async function toggleClassEarly(classId, active) {
+    const set = new Set(rules.earlyOnlyExceptions || []);
+    if (active) set.delete(classId); else set.add(classId);
+    const next = { ...rules, earlyOnlyExceptions: [...set] };
+    setRules(next);
+    await api('/settings', { method: 'POST', body: { rules: next } });
+    await refresh();
   }
   useEffect(() => {
     if ((!availTeacherId || !uniqueTeachers.some((t) => t.id === availTeacherId)) && uniqueTeachers[0]) setAvailTeacherId(uniqueTeachers[0].id);
@@ -1190,17 +1200,49 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
   return (
     <section className="constraints-layout">
       <div className="panel wide-panel">
-        <PanelTitle icon={ShieldCheck} title="Правила составления" />
+        <div className="rule-head">
+          <PanelTitle icon={ShieldCheck} title="Правила составления" />
+          <button className="rule-config-btn" disabled={rules.earlyOnlyMathRussian === false}
+            onClick={() => setRulesModal(true)}
+            title={rules.earlyOnlyMathRussian === false ? 'Правило выключено полностью' : 'Настроить по классам'}>
+            <Pencil size={16} /> Настроить
+          </button>
+        </div>
         <label className="rule-toggle">
           <input type="checkbox" checked={rules.earlyOnlyMathRussian !== false}
             onChange={(e) => toggleRule('earlyOnlyMathRussian', e.target.checked)} />
           <span className="rule-switch" aria-hidden="true"></span>
           <span className="rule-text">
             <b>Математика и русский язык в 5–6 классах — только 1–4 урок</b>
-            <small>Выключите, чтобы разрешить ставить эти предметы на любой урок в 5–6 классах.</small>
+            <small>Выключите, чтобы разрешить ставить эти предметы на любой урок в 5–6 классах. «Настроить» — включить/выключить для отдельных классов.</small>
           </span>
         </label>
+        {(rules.earlyOnlyExceptions || []).length > 0 && rules.earlyOnlyMathRussian !== false && (
+          <p className="hint">Выключено для {(rules.earlyOnlyExceptions || []).length} кл. — нажмите «Настроить».</p>
+        )}
       </div>
+      {rulesModal && (
+        <ModalFrame label="Правило по классам" className="rule-classes-modal" onClose={() => setRulesModal(false)}>
+          <h3>Только 1–4 урок — по классам</h3>
+          <p className="hint">Правило действует только на 5–6 классы. Выключите ползунок, чтобы в этом классе математику/русский можно было ставить на любой урок.</p>
+          <div className="rule-class-list">
+            {state.classes.filter((c) => c.grade === 5 || c.grade === 6).sort((a, b) => a.grade - b.grade || String(a.letter).localeCompare(b.letter, 'ru')).map((c) => {
+              const active = !(rules.earlyOnlyExceptions || []).includes(c.id);
+              return (
+                <label className="rule-class-row" key={c.id}>
+                  <span className="rule-class-name">{c.grade}{c.letter} · {shiftName(state, c.shift)}</span>
+                  <span className="rule-class-toggle">
+                    <input type="checkbox" checked={active} onChange={(e) => toggleClassEarly(c.id, e.target.checked)} />
+                    <span className="rule-switch" aria-hidden="true"></span>
+                    <span className="rule-class-state">{active ? 'только 1–4' : 'любой урок'}</span>
+                  </span>
+                </label>
+              );
+            })}
+            {state.classes.filter((c) => c.grade === 5 || c.grade === 6).length === 0 && <p className="hint">Нет 5–6 классов.</p>}
+          </div>
+        </ModalFrame>
+      )}
       <div className="panel wide-panel" ref={blocksRef}>
         <div className="segmented">
           <button className="export-link" onClick={async () => { await downloadFile('/export/constraints.xlsx'); setNotice('Ограничения выгружены в Excel'); }}><FileSpreadsheet size={18} /> Скачать все ограничения (Excel)</button>
@@ -1708,6 +1750,13 @@ function normTeacher(name) {
   return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+// Early-only rule (5-6 math/russian on lessons 1-4) — on globally unless the toggle
+// is off, and can be switched off per class via rules.earlyOnlyExceptions (class ids).
+function earlyRuleActiveFE(state, classId) {
+  if (state.settings?.rules?.earlyOnlyMathRussian === false) return false;
+  return !(state.settings?.rules?.earlyOnlyExceptions || []).includes(classId);
+}
+
 // Real clock interval of a lesson slot — two classes clash only when their
 // intervals overlap (morning-late and afternoon-early bells can overlap; two
 // different levels in one shift at the same lesson number may NOT).
@@ -1777,7 +1826,7 @@ function placementValid(schedule, state, className, week, cell, dayId, periodNum
   const shift = meta.shift || 'morning';
   const subject = cell.subject;
   const subjLower = String(subject || '').trim().toLowerCase();
-  const earlyRuleOn = state.settings?.rules?.earlyOnlyMathRussian !== false;
+  const earlyRuleOn = earlyRuleActiveFE(state, meta.id);
   if (earlyRuleOn && (grade === 5 || grade === 6) && (subjLower === 'математика' || subjLower === 'русский язык') && periodNumber > 4) return false;
   const sameSubject = Object.values(resultingDay).filter((c) => c?.subject === subject).length;
   if (sameSubject > 1) return false;
@@ -1841,7 +1890,7 @@ function findFreeSlotsForCell(schedule, state, className, week, srcDayId, srcPer
   const grade = parseInt(String(className), 10);
   const subject = cell.subject;
   const subjLower = String(subject || '').trim().toLowerCase();
-  const earlyRuleOn = state.settings?.rules?.earlyOnlyMathRussian !== false;
+  const earlyRuleOn = earlyRuleActiveFE(state, classId);
   const isEarlyOnly = earlyRuleOn && (grade === 5 || grade === 6) && (subjLower === 'математика' || subjLower === 'русский язык');
   const inMathFamily = MATH_FAMILY.includes(subject);
   const availability = state.teacherAvailability;
@@ -2012,8 +2061,9 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
             {schedule.periods.map((period) => {
               const cell = grid[day.id]?.[period.number];
               const conflicts = cell ? findCellConflicts(schedule, className, safeWeek, day.id, period.number) : [];
+              const lateHard = cell && (cell.difficulty || 0) >= 4 && period.number >= 5;
               return (
-                <div className={`cell-button${conflicts.length ? ' cell-conflict' : ''}`} key={period.number}
+                <div className={`cell-button${conflicts.length ? ' cell-conflict' : ''}${lateHard ? ' cell-late-hard' : ''}`} key={period.number}
                   role="button" tabIndex={0}
                   onClick={() => setEdit({
                     dayId: day.id,
