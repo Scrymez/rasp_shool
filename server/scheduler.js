@@ -14,6 +14,7 @@ export function generateSchedule({ classes, assignments, settings, classIds, wee
   const variants = weekMode === 'two' ? ['odd', 'even'] : ['single'];
   const attempts = ATTEMPTS.map((strategy) => buildSchedule({ selected, assignments, settings, days, periods, variants, weekMode, strategy }));
   const best = attempts.sort((a, b) => scheduleScore(a) - scheduleScore(b))[0];
+  best.earlyOverload = computeEarlyOverload(assignments, settings, selected);
   // Phase 4: polish only the winning schedule (local-search swaps that strictly
   // improve it), then refresh clash report and quality. Every swap is rule-checked.
   if (settings.optimize !== false) {
@@ -142,6 +143,18 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
       compactClass(payload, ctx, { busy, settings, days, variant });
     }
 
+    // Targeted backtracking: for still-unplaced lessons, free a slot by moving one
+    // existing lesson elsewhere in the same class (2-level search). Validated the
+    // same way as the polish pass, so no hard rule can be broken.
+    for (const item of unplaced) {
+      if (item.placed) continue;
+      const { schoolClass, key, classPeriods } = item.ctx;
+      const grid = payload.classes[key][variant];
+      const meta = payload.classMeta[key];
+      if (tryPlaceUnplaced(payload, settings, key, meta, schoolClass.grade, variant, grid, days, classPeriods, item.lesson)) {
+        item.placed = true;
+      }
+    }
 
     for (const { lesson, ctx, placed } of unplaced) {
       if (placed) continue;
@@ -229,6 +242,40 @@ function lessonPlacementRank(lesson, priority) {
   return { bucket: 1, tightness: priority.tightness[lesson.teacherKey] || 0 };
 }
 
+// Early-only subjects (5-6 grade math/russian) must sit on lessons 1-4. A teacher
+// whose early demand exceeds their early capacity will always leave some unplaced,
+// no matter the algorithm — this flags exactly who needs a second teacher.
+function computeEarlyOverload(assignments, settings, selected) {
+  if (settings.rules?.earlyOnlyMathRussian === false) return [];
+  const selectedIds = new Set(selected.map((c) => c.id));
+  const days = (settings.days || []).filter((d) => d.enabled);
+  const demand = new Map();
+  for (const a of assignments) {
+    if (!selectedIds.has(a.classId)) continue;
+    const grade = Number(a.grade);
+    const subj = String(a.subjectName || '').trim().toLowerCase();
+    if ((grade === 5 || grade === 6) && (subj === 'математика' || subj === 'русский язык')) {
+      const key = teacherKeyOf(a.teacherName);
+      if (!key) continue;
+      const entry = demand.get(key) || { teacher: a.teacherName, hours: 0 };
+      entry.hours += Number(a.weeklyHours || 0);
+      demand.set(key, entry);
+    }
+  }
+  const out = [];
+  for (const [key, entry] of demand) {
+    let capacity = 0;
+    for (const day of days) {
+      for (let p = 1; p <= 4; p += 1) {
+        if (!isTeacherUnavailable(settings, key, day.id, p, 'morning')
+          && !isOutsideAvailability(settings, key, day.id, p, 'morning')) capacity += 1;
+      }
+    }
+    if (entry.hours >= capacity) out.push({ teacher: entry.teacher, earlyLessons: entry.hours, earlyCapacity: capacity, deficit: entry.hours - capacity, tight: entry.hours === capacity });
+  }
+  return out.sort((a, b) => b.deficit - a.deficit);
+}
+
 // ---- Phase 4: local-search polish ----------------------------------------
 // Hill-climbing over cell swaps. Legality is checked directly against the payload
 // (teacher/room busy in other classes by real time overlap, teacher windows,
@@ -280,6 +327,48 @@ function trySwapImprove(payload, settings, key, meta, grade, variant, grid, days
   // Revert.
   grid[a.day.id][a.period.number] = cellA;
   grid[b.day.id][b.period.number] = cellB;
+  return false;
+}
+
+// Place a still-unplaced lesson by freeing a slot: either drop it into a legal
+// empty cell, or move one occupied lesson to another legal empty cell so the
+// stuck lesson fits. Every trial is validated against the hard rules.
+function tryPlaceUnplaced(payload, settings, key, meta, grade, variant, grid, days, classPeriods, lesson) {
+  const L = lessonToCell(lesson);
+  // 1) A legal empty cell (the greedy pass may have missed one after balancing).
+  for (const day of days) {
+    for (const period of classPeriods) {
+      if (grid[day.id]?.[period.number]) continue;
+      grid[day.id][period.number] = L;
+      if (cellPlaceable(payload, settings, key, meta, grade, variant, L, day, period)
+        && respectsSubjectPlacementRules(grid, grade)
+        && dayWithinLimits(grid, settings, grade, day.id)) return true;
+      grid[day.id][period.number] = null;
+    }
+  }
+  // 2) Bump one lesson to a free legal slot, put L in its place.
+  for (const day of days) {
+    for (const period of classPeriods) {
+      const M = grid[day.id]?.[period.number];
+      if (!M) continue;
+      grid[day.id][period.number] = L;
+      if (cellPlaceable(payload, settings, key, meta, grade, variant, L, day, period)) {
+        for (const d2 of days) {
+          for (const p2 of classPeriods) {
+            if (grid[d2.id]?.[p2.number]) continue;
+            if (d2.id === day.id && p2.number === period.number) continue;
+            grid[d2.id][p2.number] = M;
+            if (cellPlaceable(payload, settings, key, meta, grade, variant, M, d2, p2)
+              && respectsSubjectPlacementRules(grid, grade)
+              && dayWithinLimits(grid, settings, grade, day.id)
+              && dayWithinLimits(grid, settings, grade, d2.id)) return true;
+            grid[d2.id][p2.number] = null;
+          }
+        }
+      }
+      grid[day.id][period.number] = M; // revert
+    }
+  }
   return false;
 }
 
