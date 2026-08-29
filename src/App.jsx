@@ -1599,7 +1599,7 @@ function Generate({ state, selectedClasses, setSelectedClasses, weekMode, setWee
   useEffect(() => {
     if (!busy) return undefined;
     setPhase(0);
-    const t = setInterval(() => setPhase((p) => (p + 1) % GEN_PHASES.length), 1500);
+    const t = setInterval(() => setPhase((p) => (p + 1) % GEN_PHASES.length), 2600);
     return () => clearInterval(t);
   }, [busy]);
   async function create() {
