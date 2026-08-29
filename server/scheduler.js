@@ -145,6 +145,8 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
     }
   }
 
+  detectTeacherClashes(payload);
+
   payload.quality = {
     strategy: strategy.name,
     score: scheduleScore(payload),
@@ -157,8 +159,8 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
 }
 
 // Free day×period slots for a teacher in ONE shift (respects day-off, arrival/departure, per-shift windows).
-function slotsForShift(settings, teacherId, shift, days, maxP) {
-  const rows = (settings.teacherAvailability || []).filter((a) => a.teacherId === teacherId);
+function slotsForShift(settings, teacherKey, shift, days, maxP) {
+  const rows = (settings.teacherAvailability || []).filter((a) => teacherKeyOf(a.teacherName) === teacherKey);
   if (!rows.length) return days.length * maxP;
   const byDay = new Map(rows.map((r) => [r.dayId, r]));
   let slots = 0;
@@ -183,14 +185,15 @@ function computeTeacherStats(settings, assignments, selected, days, maxP) {
   const selectedIds = new Set(selected.map((c) => c.id));
   const stats = {};
   for (const a of assignments) {
-    if (!a.teacherId || !selectedIds.has(a.classId)) continue;
-    const s = stats[a.teacherId] || { id: a.teacherId, name: a.teacherName || 'учитель', load: 0, shifts: new Set() };
+    const key = teacherKeyOf(a.teacherName);
+    if (!key || !selectedIds.has(a.classId)) continue;
+    const s = stats[key] || { key, name: a.teacherName || 'учитель', load: 0, shifts: new Set() };
     s.load += Number(a.weeklyHours || 1);
     s.shifts.add(a.shift || 'morning');
-    stats[a.teacherId] = s;
+    stats[key] = s;
   }
   for (const s of Object.values(stats)) {
-    s.capacity = [...s.shifts].reduce((sum, sh) => sum + slotsForShift(settings, s.id, sh, days, maxP), 0);
+    s.capacity = [...s.shifts].reduce((sum, sh) => sum + slotsForShift(settings, s.key, sh, days, maxP), 0);
   }
   return stats;
 }
@@ -198,16 +201,73 @@ function computeTeacherStats(settings, assignments, selected, days, maxP) {
 // Teachers with tighter availability (more lessons vs fewer free slots) should be placed first.
 function teacherPriorityMap(settings, assignments, selected, days, maxP) {
   const stats = computeTeacherStats(settings, assignments, selected, days, maxP);
-  const constrained = new Set((settings.teacherAvailability || []).map((a) => a.teacherId));
+  const constrained = new Set((settings.teacherAvailability || []).map((a) => teacherKeyOf(a.teacherName)).filter(Boolean));
   const tightness = {};
-  for (const s of Object.values(stats)) tightness[s.id] = s.load / Math.max(1, s.capacity);
+  for (const s of Object.values(stats)) tightness[s.key] = s.load / Math.max(1, s.capacity);
   return { constrained, tightness, stats };
 }
 
 function lessonPlacementRank(lesson, priority) {
-  if (!lesson.teacherId) return { bucket: 2, tightness: 0 };
-  if (priority.constrained.has(lesson.teacherId)) return { bucket: 0, tightness: priority.tightness[lesson.teacherId] || 0 };
-  return { bucket: 1, tightness: priority.tightness[lesson.teacherId] || 0 };
+  if (!lesson.teacherKey) return { bucket: 2, tightness: 0 };
+  if (priority.constrained.has(lesson.teacherKey)) return { bucket: 0, tightness: priority.tightness[lesson.teacherKey] || 0 };
+  return { bucket: 1, tightness: priority.tightness[lesson.teacherKey] || 0 };
+}
+
+// One physical teacher may be stored as several rows (one per subject), each with
+// its own id. The person's identity for scheduling is their normalized full name.
+function teacherKeyOf(name) {
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// After generation, flag any teacher standing in two classes at the same time
+// (same shift/day/period). With teacher identity keyed by name, this catches a
+// person who teaches several subjects being double-booked across those subjects.
+function detectTeacherClashes(payload) {
+  const dayName = new Map((payload.days || []).map((d) => [d.id, d.name]));
+  const groups = new Map();
+  for (const [className, weeks] of Object.entries(payload.classes || {})) {
+    const shift = payload.classMeta?.[className]?.shift || 'morning';
+    for (const [variant, grid] of Object.entries(weeks || {})) {
+      for (const [dayId, cells] of Object.entries(grid || {})) {
+        for (const [num, cell] of Object.entries(cells || {})) {
+          if (!cell) continue;
+          const key = teacherKeyOf(cell.teacher);
+          if (!key) continue;
+          const gid = `${variant}|${shift}|${dayId}|${num}|${key}`;
+          const arr = groups.get(gid) || [];
+          arr.push({ className, subject: cell.subject, teacher: cell.teacher, dayId, periodNumber: Number(num), variant });
+          groups.set(gid, arr);
+        }
+      }
+    }
+  }
+  const clashes = [];
+  for (const arr of groups.values()) {
+    if (arr.length < 2) continue;
+    const first = arr[0];
+    clashes.push({
+      teacher: first.teacher,
+      week: first.variant,
+      dayId: first.dayId,
+      dayName: dayName.get(first.dayId) || first.dayId,
+      periodNumber: first.periodNumber,
+      classes: arr.map((x) => x.className),
+      subjects: arr.map((x) => x.subject)
+    });
+  }
+  payload.teacherClashes = clashes;
+  for (const c of clashes) {
+    payload.diagnostics.push({
+      level: 'error',
+      className: c.classes.join(', '),
+      week: c.week,
+      subject: c.subjects.join(' / '),
+      teacher: c.teacher,
+      reasonCode: 'teacher-clash',
+      reason: 'учитель стоит одновременно в нескольких классах',
+      message: `Учитель ${c.teacher}: одновременно ${c.classes.length} класса (${c.classes.join(', ')}), ${c.dayName}, урок №${c.periodNumber}`
+    });
+  }
 }
 
 function lessonToCell(lesson) {
@@ -215,6 +275,7 @@ function lessonToCell(lesson) {
     subject: lesson.subjectName,
     teacher: lesson.teacherName || 'Не назначен',
     teacherId: lesson.teacherId || null,
+    teacherKey: lesson.teacherKey || teacherKeyOf(lesson.teacherName),
     room: lesson.roomName || '',
     roomId: lesson.roomId || null,
     difficulty: lesson.difficulty,
@@ -227,6 +288,7 @@ function cellToLesson(cell) {
     subjectName: cell.subject,
     teacherName: cell.teacher,
     teacherId: cell.teacherId || null,
+    teacherKey: cell.teacherKey || teacherKeyOf(cell.teacher),
     roomName: cell.room,
     roomId: cell.roomId || null,
     difficulty: cell.difficulty,
@@ -245,7 +307,7 @@ function tryRelocateToFit(payload, { lesson: L, ctx }, { busy, settings, days, v
     for (const period of classPeriods) {
       const cellM = grid[day.id]?.[period.number];
       if (!cellM) continue;
-      if (cellM.teacherId && cellM.teacherId === L.teacherId) continue; // same teacher — swap won't help
+      if (cellM.teacherKey && cellM.teacherKey === L.teacherKey) continue; // same teacher — swap won't help
       const mLesson = cellToLesson(cellM);
       grid[day.id][period.number] = null;
       releaseResource({ busy, settings, variant, level, shift, dayId: day.id, period, lesson: mLesson });
@@ -281,7 +343,7 @@ function tryRelocateToFit(payload, { lesson: L, ctx }, { busy, settings, days, v
 // Cross-class repair: the stuck teacher T has an empty, allowed slot in class C, but is busy there
 // because T teaches another class C2 at that time. Move T's C2 lesson to a free slot, then place L in C.
 function tryCrossClassRelocate(payload, { lesson: L, ctx }, { busy, settings, days, variant }) {
-  const T = L.teacherId;
+  const T = L.teacherKey;
   if (!T) return false;
   const { schoolClass: C, shift, classPeriods, key } = ctx;
   const level = C.level;
@@ -306,7 +368,7 @@ function tryCrossClassRelocate(payload, { lesson: L, ctx }, { busy, settings, da
         const periods2 = timetableFor(settings, meta2.level, meta2.shift).periods;
         for (const p2 of periods2) {
           const cell2 = grid2[day.id]?.[p2.number];
-          if (!cell2 || cell2.teacherId !== T) continue;
+          if (!cell2 || cell2.teacherKey !== T) continue;
           if (!intervalsOverlap(wantInterval, periodInterval(settings, meta2.level, meta2.shift, p2.number))) continue;
           // relocate cell2 within C2 to a free slot where T is free
           const m2 = cellToLesson(cell2);
@@ -459,7 +521,7 @@ function lessonCountForVariant(weeklyHours, variant, weekMode) {
 
 function expandAssignment(item, variant = 'single', weekMode = 'one') {
   const count = lessonCountForVariant(item.weeklyHours, variant, weekMode);
-  return Array.from({ length: count }, (_, index) => ({ ...item, copy: index }));
+  return Array.from({ length: count }, (_, index) => ({ ...item, copy: index, teacherKey: teacherKeyOf(item.teacherName) }));
 }
 
 function lessonConstraintWeight(lesson) {
@@ -513,9 +575,9 @@ function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClas
   if (!canDouble && sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-consecutive';
   if (settings.rules?.earlyOnlyMathRussian !== false && isEarlyOnly(lesson.subjectName, schoolClass.grade) && period.number > 4) return 'early-only';
   if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return 'school-block';
-  if (isTeacherUnavailable(settings, lesson.teacherId, day.id, period.number, shift)) return 'teacher-off';
-  if (isOutsideAvailability(settings, lesson.teacherId, day.id, period.number, shift)) return 'teacher-window';
-  if (lesson.teacherId && resourceBusy(busy.teachers, settings, variant, schoolClass.level, shift, lesson.teacherId, day.id, period)) return 'teacher-busy';
+  if (isTeacherUnavailable(settings, lesson.teacherKey, day.id, period.number, shift)) return 'teacher-off';
+  if (isOutsideAvailability(settings, lesson.teacherKey, day.id, period.number, shift)) return 'teacher-window';
+  if (lesson.teacherKey && resourceBusy(busy.teachers, settings, variant, schoolClass.level, shift, lesson.teacherKey, day.id, period)) return 'teacher-busy';
   if (lesson.roomId && resourceBusy(busy.rooms, settings, variant, schoolClass.level, shift, lesson.roomId, day.id, period)) return 'room-busy';
   if (dayLoad(grid, day.id) >= maxLessons(settings, schoolClass.grade)) return 'day-full';
   if (dayDifficulty(grid, day.id) + lesson.difficulty > maxDailyDifficulty(settings, schoolClass.grade)) return 'difficulty';
@@ -668,13 +730,13 @@ function preferredPeriodPenalty(periodNumber, difficulty) {
 
 function reserveResource({ busy, settings, variant, level, shift, dayId, period, lesson }) {
   const interval = periodInterval(settings, level, shift, period.number);
-  if (lesson.teacherId) addBusy(busy.teachers, variant, lesson.teacherId, dayId, interval);
+  if (lesson.teacherKey) addBusy(busy.teachers, variant, lesson.teacherKey, dayId, interval);
   if (lesson.roomId) addBusy(busy.rooms, variant, lesson.roomId, dayId, interval);
 }
 
 function releaseResource({ busy, settings, variant, level, shift, dayId, period, lesson }) {
   const interval = periodInterval(settings, level, shift, period.number);
-  if (lesson.teacherId) removeBusy(busy.teachers, variant, lesson.teacherId, dayId, interval);
+  if (lesson.teacherKey) removeBusy(busy.teachers, variant, lesson.teacherKey, dayId, interval);
   if (lesson.roomId) removeBusy(busy.rooms, variant, lesson.roomId, dayId, interval);
 }
 
@@ -856,19 +918,19 @@ function maxDailyDifficulty(settings, grade) {
   return Number(settings.sanpin?.maxDailyDifficultyByGrade?.[grade] || 99);
 }
 
-function isTeacherUnavailable(settings, teacherId, dayId, periodNumber, shift) {
-  if (!teacherId) return false;
+function isTeacherUnavailable(settings, teacherKey, dayId, periodNumber, shift) {
+  if (!teacherKey) return false;
   return (settings.teacherConstraints || []).some((item) => (
-    item.teacherId === teacherId &&
+    teacherKeyOf(item.teacherName) === teacherKey &&
     item.dayId === dayId &&
     (!item.shift || item.shift === shift) &&
     (item.periodNumber == null || item.periodNumber === periodNumber)
   ));
 }
 
-function isOutsideAvailability(settings, teacherId, dayId, periodNumber, shift) {
-  if (!teacherId) return false;
-  const window = (settings.teacherAvailability || []).find((item) => item.teacherId === teacherId && item.dayId === dayId);
+function isOutsideAvailability(settings, teacherKey, dayId, periodNumber, shift) {
+  if (!teacherKey) return false;
+  const window = (settings.teacherAvailability || []).find((item) => teacherKeyOf(item.teacherName) === teacherKey && item.dayId === dayId);
   if (!window) return false;
   if (window.dayOff) return true;
   if (window.fromPeriod != null && periodNumber < window.fromPeriod) return true;

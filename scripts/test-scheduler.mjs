@@ -93,4 +93,32 @@ for (const { id } of days) {
   assert.ok(!(subjects.includes('Алгебра') && subjects.includes('Геометрия')), 'Алгебра и Геометрия не должны стоять в один день');
 }
 
-console.log(JSON.stringify({ ok: true, grade6Days, grade5Days, mathGeometryDiagnostics: mathGeometry.diagnostics.length, algebraGeometryDiagnostics: algebraGeometry.diagnostics.length }));
+// One physical teacher stored as two subject rows (different ids, same name) must
+// be treated as a single person: never double-booked across the two classes.
+const sharedTeacher = 'Иванова Мария Петровна';
+const twoClasses = generateSchedule({
+  classes: [
+    { id: 51, level: 'ООО', grade: 5, letter: 'А', shift: 'morning' },
+    { id: 52, level: 'ООО', grade: 5, letter: 'Б', shift: 'morning' }
+  ],
+  assignments: [
+    { classId: 51, subjectName: 'История', teacherId: 100, teacherName: sharedTeacher, difficulty: 3, weeklyHours: 4, paired: 0 },
+    { classId: 52, subjectName: 'Биология', teacherId: 200, teacherName: sharedTeacher, difficulty: 3, weeklyHours: 4, paired: 0 }
+  ],
+  settings,
+  classIds: [51, 52],
+  weekMode: 'one'
+});
+assert.equal((twoClasses.teacherClashes || []).length, 0, 'учитель с несколькими предметами не должен вести два класса одновременно');
+// Cross-check by hand: the same name must not appear at the same day+period in both classes.
+for (const { id } of days) {
+  const a = twoClasses.classes['5А'].single[id];
+  const b = twoClasses.classes['5Б'].single[id];
+  for (const p of periods) {
+    const ta = a?.[p.number]?.teacher;
+    const tb = b?.[p.number]?.teacher;
+    assert.ok(!(ta && tb && ta === tb), `накладка учителя ${ta} в день ${id}, урок ${p.number}`);
+  }
+}
+
+console.log(JSON.stringify({ ok: true, grade6Days, grade5Days, mathGeometryDiagnostics: mathGeometry.diagnostics.length, algebraGeometryDiagnostics: algebraGeometry.diagnostics.length, teacherClashes: twoClasses.teacherClashes.length }));

@@ -1399,6 +1399,28 @@ output {
   font-size: 12px;
 }
 
+.clash-list {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(239, 108, 108, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(239, 108, 108, 0.35);
+  display: grid;
+  gap: 5px;
+}
+
+.clash-list > b {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #ef6c6c;
+}
+
+.clash-list p {
+  margin: 0;
+  font-size: 13px;
+}
+
 .rule-toggle {
   display: flex;
   align-items: flex-start;

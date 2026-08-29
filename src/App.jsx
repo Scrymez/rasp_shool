@@ -1648,9 +1648,7 @@ function findCellConflicts(schedule, className, week, dayId, periodNumber) {
     if ((schedule.classMeta?.[otherName]?.shift || 'morning') !== shift) continue;
     const other = weeks?.[week]?.[dayId]?.[periodNumber];
     if (!other) continue;
-    const sameTeacher = cell.teacherId != null && other.teacherId != null
-      ? cell.teacherId === other.teacherId
-      : Boolean(cell.teacher) && cell.teacher === other.teacher;
+    const sameTeacher = Boolean(cell.teacher) && normTeacher(cell.teacher) === normTeacher(other.teacher);
     if (sameTeacher) {
       conflicts.push({ kind: 'teacher', className: otherName, dayName, periodNumber, subject: other.subject, teacher: other.teacher, room: other.room });
     }
@@ -1665,6 +1663,12 @@ function findCellConflicts(schedule, className, week, dayId, periodNumber) {
 }
 
 const MATH_FAMILY = ['Математика', 'Алгебра', 'Геометрия'];
+
+// A teacher may be stored as several rows (one per subject). Their identity as a
+// person is the normalized full name — compare teachers by this, never by id.
+function normTeacher(name) {
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
 
 function teacherBlockedByWindow(availability, teacherId, dayId, periodNumber, shift) {
   if (teacherId == null) return false;
@@ -1694,9 +1698,7 @@ function teacherBusyElsewhere(schedule, className, week, teacherId, teacherName,
     if ((schedule.classMeta?.[otherName]?.shift || 'morning') !== shift) continue;
     const other = weeks?.[week]?.[dayId]?.[periodNumber];
     if (!other) continue;
-    const same = teacherId != null && other.teacherId != null
-      ? teacherId === other.teacherId
-      : Boolean(teacherName) && teacherName === other.teacher;
+    const same = Boolean(teacherName) && normTeacher(teacherName) === normTeacher(other.teacher);
     if (same) return true;
   }
   return false;
@@ -1987,6 +1989,16 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
           </React.Fragment>
         ))}
       </div>
+      {schedule.teacherClashes?.length > 0 && (
+        <div className="clash-list">
+          <b><AlertTriangle size={16} /> Накладки по учителям: {schedule.teacherClashes.length}</b>
+          {schedule.teacherClashes.slice(0, 12).map((c, index) => (
+            <p key={index}>
+              <b>{c.teacher}</b> — {c.dayName}, урок №{c.periodNumber}: классы {c.classes.join(', ')} ({c.subjects.join(' / ')})
+            </p>
+          ))}
+        </div>
+      )}
       {schedule.diagnostics?.length > 0 && (
         <div className="warning-list">
           {schedule.diagnostics.slice(0, 8).map((item, index) => <p key={index}>{item.className}: {item.message}</p>)}

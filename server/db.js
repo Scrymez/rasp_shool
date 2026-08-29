@@ -448,12 +448,15 @@ function parseWindows(value) {
 
 export function allTeacherAvailability() {
   return db.prepare(`
-    SELECT id, teacher_id AS teacherId, day_id AS dayId, day_off AS dayOff,
-           from_period AS fromPeriod, to_period AS toPeriod, windows
-    FROM teacher_availability
+    SELECT ta.id, ta.teacher_id AS teacherId, ta.day_id AS dayId, ta.day_off AS dayOff,
+           ta.from_period AS fromPeriod, ta.to_period AS toPeriod, ta.windows,
+           t.full_name AS teacherName
+    FROM teacher_availability ta
+    LEFT JOIN teachers t ON t.id = ta.teacher_id
   `).all().map((row) => ({
     id: row.id,
     teacherId: row.teacherId,
+    teacherName: row.teacherName || '',
     dayId: row.dayId,
     dayOff: Boolean(row.dayOff),
     fromPeriod: row.fromPeriod == null ? null : Number(row.fromPeriod),
