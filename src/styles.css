@@ -1281,6 +1281,24 @@ output {
   box-shadow: inset 0 0 0 2px rgba(239, 108, 108, 0.85);
 }
 
+/* Empty lesson that is a window (a hole before the day's last lesson, incl. a late start). */
+.cell-button.cell-window {
+  background:
+    repeating-linear-gradient(135deg, rgba(239, 108, 108, 0.1) 0 8px, rgba(239, 108, 108, 0.03) 8px 16px),
+    rgba(17, 19, 29, 0.88);
+  box-shadow: inset 0 0 0 1px rgba(239, 108, 108, 0.35);
+}
+
+.window-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: #ef9a9a;
+  background: rgba(239, 108, 108, 0.16);
+}
+
 /* Hard subject (difficulty >= 4) that landed late in the day — flag it for the operator. */
 .cell-button.cell-late-hard {
   background:

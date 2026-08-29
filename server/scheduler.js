@@ -19,6 +19,7 @@ export function generateSchedule({ classes, assignments, settings, classIds, wee
   // improve it), then refresh clash report and quality. Every swap is rule-checked.
   if (settings.optimize !== false) {
     for (const variant of variants) optimizeSchedule(best, { settings, days, variant });
+    for (const variant of variants) pullToFrontAll(best, { settings, days, variant });
     detectTeacherClashes(best);
     best.quality = {
       strategy: best.quality?.strategy,
@@ -325,6 +326,41 @@ function optimizeSchedule(payload, { settings, days, variant }) {
       else restoreGrid(grid, best, days);
     }
     restoreGrid(grid, best, days);
+  }
+}
+
+// Shift a whole day up so it starts at lesson 1, one step at a time, but only when
+// every lesson can legally move one lesson earlier — so the block stays contiguous
+// and no new internal gap appears. A blocked/unavailable lesson-1 stops the shift.
+function pullToFrontAll(payload, { settings, days, variant }) {
+  for (const [key, weeks] of Object.entries(payload.classes)) {
+    const grid = weeks[variant];
+    if (!grid) continue;
+    const meta = payload.classMeta[key];
+    const grade = gradeFromKey(key);
+    const classPeriods = timetableFor(settings, meta.level, meta.shift).periods;
+    for (const day of days) pullDayToFront(payload, settings, key, meta, grade, variant, grid, classPeriods, day);
+  }
+}
+
+function pullDayToFront(payload, settings, key, meta, grade, variant, grid, classPeriods, day) {
+  let guard = 0;
+  while (guard++ < 12) {
+    const used = classPeriods.filter((p) => grid[day.id]?.[p.number]).map((p) => p.number).sort((a, b) => a - b);
+    if (!used.length || used[0] === 1) return;
+    const orig = {};
+    for (const n of used) { orig[n] = grid[day.id][n]; grid[day.id][n] = null; }
+    let ok = true;
+    for (const n of used) {
+      const target = classPeriods.find((p) => p.number === n - 1);
+      if (!target) { ok = false; break; }
+      grid[day.id][target.number] = orig[n];
+      if (!cellPlaceable(payload, settings, key, meta, grade, variant, orig[n], day, target)) { ok = false; break; }
+    }
+    if (ok && respectsSubjectPlacementRules(grid, grade)) continue; // shifted up by 1
+    for (const p of classPeriods) grid[day.id][p.number] = null;
+    for (const n of used) grid[day.id][n] = orig[n];
+    return;
   }
 }
 
@@ -1142,6 +1178,9 @@ function sameSubjectNearDays(grid, days, dayId, subjectName) {
   }, 0);
 }
 
+// Internal windows = empty lessons BETWEEN the first and last lesson of the day.
+// A late start (empty lesson 1) is handled separately by pullDayToFront, which
+// shifts the whole day up only when it creates no new internal gap.
 function classWindowCount(grid) {
   let windows = 0;
   for (const periods of Object.values(grid)) {

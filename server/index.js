@@ -1802,10 +1802,9 @@ function computeScheduleIssues(payload) {
             byTeacherDay.set(key, list);
           }
         }
-        if (used.length > 1) {
-          const min = Math.min(...used);
+        if (used.length) {
           const max = Math.max(...used);
-          for (let n = min; n <= max; n += 1) {
+          for (let n = 1; n <= max; n += 1) {
             if (!grid[day.id]?.[n]) classGaps.push({ className, week, day: day.name, period: n });
           }
         }

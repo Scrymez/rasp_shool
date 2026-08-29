@@ -2055,15 +2055,20 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
       <div className="schedule-grid" style={{ gridTemplateColumns: `120px repeat(${schedule.periods.length}, minmax(92px, 1fr))` }}>
         <b>День</b>
         {schedule.periods.map((period) => <b key={period.number}>{period.number}<small>{periodTime(schedule, classLevel, classShift, period.number)}</small></b>)}
-        {schedule.days.map((day) => (
+        {schedule.days.map((day) => {
+          const filled = schedule.periods.filter((p) => grid[day.id]?.[p.number]).map((p) => p.number);
+          const lastUsed = filled.length ? Math.max(...filled) : 0;
+          return (
           <React.Fragment key={day.id}>
             <b>{day.name}</b>
             {schedule.periods.map((period) => {
               const cell = grid[day.id]?.[period.number];
               const conflicts = cell ? findCellConflicts(schedule, className, safeWeek, day.id, period.number) : [];
               const lateHard = cell && (cell.difficulty || 0) >= 4 && period.number >= 5;
+              const isWindow = !cell && period.number < lastUsed
+                && !slotSchoolBlocked(state.scheduleBlocks, day.id, period.number, classShift, schedule.classMeta?.[className]?.id);
               return (
-                <div className={`cell-button${conflicts.length ? ' cell-conflict' : ''}${lateHard ? ' cell-late-hard' : ''}`} key={period.number}
+                <div className={`cell-button${conflicts.length ? ' cell-conflict' : ''}${lateHard ? ' cell-late-hard' : ''}${isWindow ? ' cell-window' : ''}`} key={period.number}
                   role="button" tabIndex={0}
                   onClick={() => setEdit({
                     dayId: day.id,
@@ -2086,12 +2091,13 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
                       <AlertTriangle size={14} />
                     </span>
                   )}
-                  {cell ? <><strong>{cell.subject}</strong><small>{cell.teacher}</small><small>{cell.room}</small></> : '—'}
+                  {cell ? <><strong>{cell.subject}</strong><small>{cell.teacher}</small><small>{cell.room}</small></> : (isWindow ? <span className="window-tag">окно</span> : '—')}
                 </div>
               );
             })}
           </React.Fragment>
-        ))}
+          );
+        })}
       </div>
       {schedule.teacherClashes?.length > 0 && (
         <div className="clash-list">
