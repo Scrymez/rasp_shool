@@ -13,7 +13,22 @@ export function generateSchedule({ classes, assignments, settings, classIds, wee
   const selected = classes.filter((item) => classIds.includes(item.id));
   const variants = weekMode === 'two' ? ['odd', 'even'] : ['single'];
   const attempts = ATTEMPTS.map((strategy) => buildSchedule({ selected, assignments, settings, days, periods, variants, weekMode, strategy }));
-  return attempts.sort((a, b) => scheduleScore(a) - scheduleScore(b))[0];
+  const best = attempts.sort((a, b) => scheduleScore(a) - scheduleScore(b))[0];
+  // Phase 4: polish only the winning schedule (local-search swaps that strictly
+  // improve it), then refresh clash report and quality. Every swap is rule-checked.
+  if (settings.optimize !== false) {
+    for (const variant of variants) optimizeSchedule(best, { settings, days, variant });
+    detectTeacherClashes(best);
+    best.quality = {
+      strategy: best.quality?.strategy,
+      score: scheduleScore(best),
+      diagnostics: best.diagnostics.length,
+      classWindows: totalClassWindows(best),
+      lateHardLessons: lateHardLessons(best),
+      difficultyImbalance: totalDifficultyImbalance(best)
+    };
+  }
+  return best;
 }
 
 // Each (education level, shift) has its own bell schedule (start + per-lesson duration/break).
@@ -127,6 +142,7 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
       compactClass(payload, ctx, { busy, settings, days, variant });
     }
 
+
     for (const { lesson, ctx, placed } of unplaced) {
       if (placed) continue;
       const { schoolClass, key, shift, classPeriods } = ctx;
@@ -213,6 +229,123 @@ function lessonPlacementRank(lesson, priority) {
   return { bucket: 1, tightness: priority.tightness[lesson.teacherKey] || 0 };
 }
 
+// ---- Phase 4: local-search polish ----------------------------------------
+// Hill-climbing over cell swaps. Legality is checked directly against the payload
+// (teacher/room busy in other classes by real time overlap, teacher windows,
+// school blocks, early-only, subject-per-day and SanPiN day limits). A swap is
+// kept only when it is legal AND strictly lowers scheduleScore. Reverting is a
+// plain cell swap back, so no busy-map bookkeeping is needed here.
+function optimizeSchedule(payload, { settings, days, variant }) {
+  for (const [key, weeks] of Object.entries(payload.classes)) {
+    const grid = weeks[variant];
+    if (!grid) continue;
+    const meta = payload.classMeta[key];
+    const grade = gradeFromKey(key);
+    const classPeriods = timetableFor(settings, meta.level, meta.shift).periods;
+    const slots = [];
+    for (const day of days) for (const period of classPeriods) slots.push({ day, period });
+    let improved = true;
+    let rounds = 0;
+    while (improved && rounds < 12) {
+      improved = false;
+      rounds += 1;
+      for (const a of slots) {
+        const cellA = grid[a.day.id]?.[a.period.number];
+        if (!cellA) continue;
+        for (const b of slots) {
+          if (a.day.id === b.day.id && a.period.number === b.period.number) continue;
+          if (trySwapImprove(payload, settings, key, meta, grade, variant, grid, days, a, b)) {
+            improved = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+}
+
+function trySwapImprove(payload, settings, key, meta, grade, variant, grid, days, a, b) {
+  const cellA = grid[a.day.id][a.period.number];
+  const cellB = grid[b.day.id]?.[b.period.number] || null;
+  const before = localGridScore(grid, grade, days);
+  // Tentatively swap (swaps only affect this class, so a local score suffices).
+  grid[a.day.id][a.period.number] = cellB;
+  grid[b.day.id][b.period.number] = cellA;
+  const legal = cellPlaceable(payload, settings, key, meta, grade, variant, cellA, b.day, b.period)
+    && (!cellB || cellPlaceable(payload, settings, key, meta, grade, variant, cellB, a.day, a.period))
+    && respectsSubjectPlacementRules(grid, grade)
+    && dayWithinLimits(grid, settings, grade, a.day.id)
+    && dayWithinLimits(grid, settings, grade, b.day.id);
+  if (legal && localGridScore(grid, grade, days) < before) return true; // keep swap
+  // Revert.
+  grid[a.day.id][a.period.number] = cellA;
+  grid[b.day.id][b.period.number] = cellB;
+  return false;
+}
+
+// Per-class contribution to scheduleScore for one grid (windows, late-hard,
+// difficulty imbalance, repeated subjects) — same weights as scheduleScore.
+function localGridScore(grid, grade, days) {
+  const windows = classWindowCount(grid);
+  let lateHard = 0;
+  let repeats = 0;
+  const diffs = [];
+  for (const day of days) {
+    const cells = grid[day.id] || {};
+    let dd = 0;
+    const counts = new Map();
+    for (const [num, cell] of Object.entries(cells)) {
+      if (!cell) continue;
+      dd += cell.difficulty || 0;
+      if (cell.difficulty >= 4 && Number(num) >= 5) lateHard += 1;
+      if (cell.subject && !cell.paired && !isGrade6RussianDouble({ subjectName: cell.subject }, grade)) {
+        counts.set(cell.subject, (counts.get(cell.subject) || 0) + 1);
+      }
+    }
+    for (const c of counts.values()) if (c > 1) repeats += c - 1;
+    diffs.push(dd);
+  }
+  const avg = diffs.reduce((s, v) => s + v, 0) / Math.max(1, diffs.length);
+  const imbalance = diffs.reduce((s, v) => s + Math.abs(v - avg), 0);
+  return windows * 550 + lateHard * 180 + imbalance * 16 + repeats * 220;
+}
+
+function dayWithinLimits(grid, settings, grade, dayId) {
+  return dayLoad(grid, dayId) <= maxLessons(settings, grade)
+    && dayDifficulty(grid, dayId) <= maxDailyDifficulty(settings, grade);
+}
+
+// Can this cell legally sit at day+period in its class, judged from the payload?
+function cellPlaceable(payload, settings, key, meta, grade, variant, cell, day, period) {
+  const shift = meta.shift;
+  if (isTeacherUnavailable(settings, cell.teacherKey, day.id, period.number, shift)) return false;
+  if (isOutsideAvailability(settings, cell.teacherKey, day.id, period.number, shift)) return false;
+  if (isScheduleBlocked(settings, day.id, period.number, shift, meta.id)) return false;
+  if (settings.rules?.earlyOnlyMathRussian !== false && isEarlyOnly(cell.subject, grade) && period.number > 4) return false;
+  if (cell.teacherKey && resourceBusyElsewhere(payload, settings, key, meta, variant, 'teacher', cell.teacherKey, day, period)) return false;
+  if (cell.roomId != null && resourceBusyElsewhere(payload, settings, key, meta, variant, 'room', cell.roomId, day, period)) return false;
+  return true;
+}
+
+// Is the teacher/room busy in ANOTHER class at a time that overlaps this slot?
+function resourceBusyElsewhere(payload, settings, thisKey, meta, variant, kind, idOrKey, day, period) {
+  const interval = periodInterval(settings, meta.level, meta.shift, period.number);
+  for (const [otherKey, weeks] of Object.entries(payload.classes)) {
+    if (otherKey === thisKey) continue;
+    const om = payload.classMeta[otherKey];
+    if (!om) continue; // compare real time intervals: morning-late and afternoon-early can overlap
+    const cells = weeks[variant]?.[day.id];
+    if (!cells) continue;
+    for (const [num, c] of Object.entries(cells)) {
+      if (!c) continue;
+      const match = kind === 'teacher' ? (c.teacherKey && c.teacherKey === idOrKey) : (c.roomId === idOrKey);
+      if (!match) continue;
+      if (intervalsOverlap(interval, periodInterval(settings, om.level, om.shift, Number(num)))) return true;
+    }
+  }
+  return false;
+}
+
 // One physical teacher may be stored as several rows (one per subject), each with
 // its own id. The person's identity for scheduling is their normalized full name.
 function teacherKeyOf(name) {
@@ -224,18 +357,21 @@ function teacherKeyOf(name) {
 // person who teaches several subjects being double-booked across those subjects.
 function detectTeacherClashes(payload) {
   const dayName = new Map((payload.days || []).map((d) => [d.id, d.name]));
+  // Group each teacher's lessons by (week, day) with their real time interval,
+  // then flag overlapping lessons in different classes (payload holds timetables).
   const groups = new Map();
   for (const [className, weeks] of Object.entries(payload.classes || {})) {
-    const shift = payload.classMeta?.[className]?.shift || 'morning';
+    const meta = payload.classMeta?.[className] || {};
     for (const [variant, grid] of Object.entries(weeks || {})) {
       for (const [dayId, cells] of Object.entries(grid || {})) {
         for (const [num, cell] of Object.entries(cells || {})) {
           if (!cell) continue;
           const key = teacherKeyOf(cell.teacher);
           if (!key) continue;
-          const gid = `${variant}|${shift}|${dayId}|${num}|${key}`;
+          const { start, end } = periodInterval(payload, meta.level, meta.shift, Number(num));
+          const gid = `${key}|${variant}|${dayId}`;
           const arr = groups.get(gid) || [];
-          arr.push({ className, subject: cell.subject, teacher: cell.teacher, dayId, periodNumber: Number(num), variant });
+          arr.push({ className, subject: cell.subject, teacher: cell.teacher, dayId, variant, periodNumber: Number(num), start, end });
           groups.set(gid, arr);
         }
       }
@@ -243,17 +379,29 @@ function detectTeacherClashes(payload) {
   }
   const clashes = [];
   for (const arr of groups.values()) {
-    if (arr.length < 2) continue;
-    const first = arr[0];
-    clashes.push({
-      teacher: first.teacher,
-      week: first.variant,
-      dayId: first.dayId,
-      dayName: dayName.get(first.dayId) || first.dayId,
-      periodNumber: first.periodNumber,
-      classes: arr.map((x) => x.className),
-      subjects: arr.map((x) => x.subject)
-    });
+    arr.sort((a, b) => a.start - b.start);
+    let cluster = [];
+    let curEnd = -Infinity;
+    const flush = () => {
+      const classes = new Set(cluster.map((x) => x.className));
+      if (cluster.length >= 2 && classes.size >= 2) {
+        const first = cluster[0];
+        clashes.push({
+          teacher: first.teacher,
+          week: first.variant,
+          dayId: first.dayId,
+          dayName: dayName.get(first.dayId) || first.dayId,
+          periodNumber: first.periodNumber,
+          classes: cluster.map((x) => x.className),
+          subjects: cluster.map((x) => x.subject)
+        });
+      }
+    };
+    for (const ev of arr) {
+      if (cluster.length && ev.start < curEnd) { cluster.push(ev); curEnd = Math.max(curEnd, ev.end); }
+      else { flush(); cluster = [ev]; curEnd = ev.end; }
+    }
+    flush();
   }
   payload.teacherClashes = clashes;
   for (const c of clashes) {

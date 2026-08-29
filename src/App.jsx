@@ -1635,28 +1635,28 @@ function Generate({ state, selectedClasses, setSelectedClasses, weekMode, setWee
   );
 }
 
-// Live cross-class conflicts for one cell: same shift, same day+period, another class.
-// Reports the teacher double-book (and room clash) with the class and lesson number where busy.
+// Live cross-class conflicts for one cell: another class whose lesson overlaps in
+// real time with the same teacher (or same room). Reports the class and that
+// class's lesson number where the clash happens.
 function findCellConflicts(schedule, className, week, dayId, periodNumber) {
   const cell = schedule.classes?.[className]?.[week]?.[dayId]?.[periodNumber];
   if (!cell) return [];
-  const shift = schedule.classMeta?.[className]?.shift || 'morning';
+  const meta = schedule.classMeta?.[className] || {};
+  const myIv = periodIntervalFE(schedule, meta.level, meta.shift, periodNumber);
   const dayName = schedule.days?.find((d) => d.id === dayId)?.name || dayId;
   const conflicts = [];
   for (const [otherName, weeks] of Object.entries(schedule.classes || {})) {
     if (otherName === className) continue;
-    if ((schedule.classMeta?.[otherName]?.shift || 'morning') !== shift) continue;
-    const other = weeks?.[week]?.[dayId]?.[periodNumber];
-    if (!other) continue;
-    const sameTeacher = Boolean(cell.teacher) && normTeacher(cell.teacher) === normTeacher(other.teacher);
-    if (sameTeacher) {
-      conflicts.push({ kind: 'teacher', className: otherName, dayName, periodNumber, subject: other.subject, teacher: other.teacher, room: other.room });
-    }
-    const sameRoom = cell.roomId != null && other.roomId != null
-      ? cell.roomId === other.roomId
-      : Boolean(cell.room) && cell.room === other.room;
-    if (sameRoom) {
-      conflicts.push({ kind: 'room', className: otherName, dayName, periodNumber, subject: other.subject, teacher: other.teacher, room: other.room });
+    const om = schedule.classMeta?.[otherName] || {};
+    const cells = weeks?.[week]?.[dayId];
+    if (!cells) continue;
+    for (const [num, other] of Object.entries(cells)) {
+      if (!other) continue;
+      if (!intervalsOverlapFE(myIv, periodIntervalFE(schedule, om.level, om.shift, Number(num)))) continue;
+      const info = { className: otherName, dayName, periodNumber: Number(num), subject: other.subject, teacher: other.teacher, room: other.room };
+      if (cell.teacher && normTeacher(cell.teacher) === normTeacher(other.teacher)) conflicts.push({ kind: 'teacher', ...info });
+      const sameRoom = cell.roomId != null && other.roomId != null ? cell.roomId === other.roomId : Boolean(cell.room) && cell.room === other.room;
+      if (sameRoom) conflicts.push({ kind: 'room', ...info });
     }
   }
   return conflicts;
@@ -1668,6 +1668,29 @@ const MATH_FAMILY = ['Математика', 'Алгебра', 'Геометри
 // person is the normalized full name — compare teachers by this, never by id.
 function normTeacher(name) {
   return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// Real clock interval of a lesson slot — two classes clash only when their
+// intervals overlap (morning-late and afternoon-early bells can overlap; two
+// different levels in one shift at the same lesson number may NOT).
+function periodIntervalFE(schedule, level, shift, periodNumber) {
+  const tt = schedule.timetables?.[level]?.[shift];
+  const periods = (tt?.periods?.length ? tt.periods : schedule.periods) || [];
+  const startStr = tt?.start || schedule.levelStarts?.[level]?.[shift]
+    || (schedule.shifts || []).find((s) => s.id === shift)?.startsAt
+    || (shift === 'afternoon' ? '14:00' : '08:30');
+  const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
+  let cur = toMin(startStr);
+  for (const p of [...periods].sort((a, b) => Number(a.number) - Number(b.number))) {
+    const start = cur;
+    const end = start + Number(p.duration || 40);
+    if (Number(p.number) === Number(periodNumber)) return { start, end };
+    cur = end + Number(p.breakAfter || 0);
+  }
+  return { start: cur, end: cur + 40 };
+}
+function intervalsOverlapFE(a, b) {
+  return a.start < b.end && b.start < a.end;
 }
 
 function teacherBlockedByWindow(availability, teacherId, dayId, periodNumber, shift) {
@@ -1690,16 +1713,20 @@ function slotSchoolBlocked(blocks, dayId, periodNumber, shift, classId) {
   ));
 }
 
-// Is this teacher already teaching in ANOTHER class at day+period (same shift)?
+// Is this teacher already teaching in ANOTHER class at an overlapping time?
 function teacherBusyElsewhere(schedule, className, week, teacherId, teacherName, dayId, periodNumber) {
-  const shift = schedule.classMeta?.[className]?.shift || 'morning';
+  if (!teacherName) return false;
+  const meta = schedule.classMeta?.[className] || {};
+  const myIv = periodIntervalFE(schedule, meta.level, meta.shift, periodNumber);
   for (const [otherName, weeks] of Object.entries(schedule.classes || {})) {
     if (otherName === className) continue;
-    if ((schedule.classMeta?.[otherName]?.shift || 'morning') !== shift) continue;
-    const other = weeks?.[week]?.[dayId]?.[periodNumber];
-    if (!other) continue;
-    const same = Boolean(teacherName) && normTeacher(teacherName) === normTeacher(other.teacher);
-    if (same) return true;
+    const om = schedule.classMeta?.[otherName] || {};
+    const cells = weeks?.[week]?.[dayId];
+    if (!cells) continue;
+    for (const [num, other] of Object.entries(cells)) {
+      if (!other || normTeacher(teacherName) !== normTeacher(other.teacher)) continue;
+      if (intervalsOverlapFE(myIv, periodIntervalFE(schedule, om.level, om.shift, Number(num)))) return true;
+    }
   }
   return false;
 }
@@ -1798,19 +1825,8 @@ function findFreeSlotsForCell(schedule, state, className, week, srcDayId, srcPer
       if (dayHasOtherMath) continue;
       if (teacherBlockedByWindow(availability, cell.teacherId, day.id, period.number, shift)) continue;
       if (slotSchoolBlocked(blocks, day.id, period.number, shift, classId)) continue;
-      // Teacher busy in another class at this day+period (same shift)?
-      let teacherBusy = false;
-      for (const [otherName, weeks] of Object.entries(schedule.classes || {})) {
-        if (otherName === className) continue;
-        if ((schedule.classMeta?.[otherName]?.shift || 'morning') !== shift) continue;
-        const other = weeks?.[week]?.[day.id]?.[period.number];
-        if (!other) continue;
-        const sameTeacher = cell.teacherId != null && other.teacherId != null
-          ? cell.teacherId === other.teacherId
-          : Boolean(cell.teacher) && cell.teacher === other.teacher;
-        if (sameTeacher) { teacherBusy = true; break; }
-      }
-      if (teacherBusy) continue;
+      // Teacher busy in another class at an overlapping time?
+      if (teacherBusyElsewhere(schedule, className, week, cell.teacherId, cell.teacher, day.id, period.number)) continue;
       out.push({ dayId: day.id, dayName: day.name, periodNumber: period.number });
     }
   }
