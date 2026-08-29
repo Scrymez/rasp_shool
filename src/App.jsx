@@ -1086,6 +1086,7 @@ function Assignments({ state, refresh, setNotice, registerCommit }) {
 function Constraints({ state, refresh, setNotice, registerCommit }) {
   const [blocks, setBlocks] = useState(state.scheduleBlocks || []);
   const [availability, setAvailability] = useState(state.teacherAvailability || []);
+  const [rules, setRules] = useState(state.settings.rules || { earlyOnlyMathRussian: true });
   const uniqueTeachers = useMemo(() => uniqueTeachersByName(state.teachers), [state.teachers]);
   const [availTeacherId, setAvailTeacherId] = useState(uniqueTeachers[0]?.id || '');
   const blocksRef = useRef(null);
@@ -1110,6 +1111,14 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
 
   useEffect(() => setBlocks(state.scheduleBlocks || []), [state.scheduleBlocks]);
   useEffect(() => setAvailability(state.teacherAvailability || []), [state.teacherAvailability]);
+  useEffect(() => setRules(state.settings.rules || { earlyOnlyMathRussian: true }), [state.settings.rules]);
+  async function toggleRule(key, value) {
+    const next = { ...rules, [key]: value };
+    setRules(next);
+    await api('/settings', { method: 'POST', body: { rules: next } });
+    await refresh();
+    setNotice('Настройка сохранена');
+  }
   useEffect(() => {
     if ((!availTeacherId || !uniqueTeachers.some((t) => t.id === availTeacherId)) && uniqueTeachers[0]) setAvailTeacherId(uniqueTeachers[0].id);
   }, [uniqueTeachers]);
@@ -1180,6 +1189,18 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
 
   return (
     <section className="constraints-layout">
+      <div className="panel wide-panel">
+        <PanelTitle icon={ShieldCheck} title="Правила составления" />
+        <label className="rule-toggle">
+          <input type="checkbox" checked={rules.earlyOnlyMathRussian !== false}
+            onChange={(e) => toggleRule('earlyOnlyMathRussian', e.target.checked)} />
+          <span className="rule-switch" aria-hidden="true"></span>
+          <span className="rule-text">
+            <b>Математика и русский язык в 5–6 классах — только 1–4 урок</b>
+            <small>Выключите, чтобы разрешить ставить эти предметы на любой урок в 5–6 классах.</small>
+          </span>
+        </label>
+      </div>
       <div className="panel wide-panel" ref={blocksRef}>
         <div className="segmented">
           <button className="export-link" onClick={async () => { await downloadFile('/export/constraints.xlsx'); setNotice('Ограничения выгружены в Excel'); }}><FileSpreadsheet size={18} /> Скачать все ограничения (Excel)</button>
@@ -1689,7 +1710,8 @@ function placementValid(schedule, state, className, week, cell, dayId, periodNum
   const shift = meta.shift || 'morning';
   const subject = cell.subject;
   const subjLower = String(subject || '').trim().toLowerCase();
-  if ((grade === 5 || grade === 6) && (subjLower === 'математика' || subjLower === 'русский язык') && periodNumber > 4) return false;
+  const earlyRuleOn = state.settings?.rules?.earlyOnlyMathRussian !== false;
+  if (earlyRuleOn && (grade === 5 || grade === 6) && (subjLower === 'математика' || subjLower === 'русский язык') && periodNumber > 4) return false;
   const sameSubject = Object.values(resultingDay).filter((c) => c?.subject === subject).length;
   if (sameSubject > 1) return false;
   if (MATH_FAMILY.includes(subject)) {
@@ -1752,7 +1774,8 @@ function findFreeSlotsForCell(schedule, state, className, week, srcDayId, srcPer
   const grade = parseInt(String(className), 10);
   const subject = cell.subject;
   const subjLower = String(subject || '').trim().toLowerCase();
-  const isEarlyOnly = (grade === 5 || grade === 6) && (subjLower === 'математика' || subjLower === 'русский язык');
+  const earlyRuleOn = state.settings?.rules?.earlyOnlyMathRussian !== false;
+  const isEarlyOnly = earlyRuleOn && (grade === 5 || grade === 6) && (subjLower === 'математика' || subjLower === 'русский язык');
   const inMathFamily = MATH_FAMILY.includes(subject);
   const availability = state.teacherAvailability;
   const blocks = state.scheduleBlocks;

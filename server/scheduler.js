@@ -511,7 +511,7 @@ function hardBlockReason({ grid, day, period, lesson, busy, settings, schoolClas
   if (canDouble && sameSubjectPeriods.length === 1 && !sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-pair-required';
   if (isGrade6RussianDouble(lesson, schoolClass.grade) && sameSubjectPeriods.length === 1 && hasSubjectDoubleOnAnotherDay(grid, day.id, lesson.subjectName)) return 'subject-weekly-double-limit';
   if (!canDouble && sameSubjectPeriods.some((n) => Math.abs(n - period.number) === 1)) return 'subject-consecutive';
-  if (isEarlyOnly(lesson.subjectName, schoolClass.grade) && period.number > 4) return 'early-only';
+  if (settings.rules?.earlyOnlyMathRussian !== false && isEarlyOnly(lesson.subjectName, schoolClass.grade) && period.number > 4) return 'early-only';
   if (isScheduleBlocked(settings, day.id, period.number, shift, schoolClass.id)) return 'school-block';
   if (isTeacherUnavailable(settings, lesson.teacherId, day.id, period.number, shift)) return 'teacher-off';
   if (isOutsideAvailability(settings, lesson.teacherId, day.id, period.number, shift)) return 'teacher-window';

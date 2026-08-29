@@ -553,12 +553,17 @@ app.post('/api/settings', (req, res) => {
   json.set('timetables', req.body.timetables || json.get('timetables'));
   json.set('maxLessonsByShift', req.body.maxLessonsByShift || json.get('maxLessonsByShift'));
   json.set('sanpin', req.body.sanpin || json.get('sanpin'));
+  if (req.body.rules) json.set('rules', { ...defaultRules(), ...json.get('rules'), ...req.body.rules });
   audit('update', 'settings');
   res.json({ settings: settingsPayload() });
 });
 
+function defaultRules() {
+  return { earlyOnlyMathRussian: true };
+}
+
 function settingsPayload() {
-  return { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), levelStarts: json.get('levelStarts'), timetables: json.get('timetables'), maxLessonsByShift: json.get('maxLessonsByShift'), sanpin: json.get('sanpin') };
+  return { days: json.get('days'), periods: json.get('periods'), shifts: json.get('shifts'), levelStarts: json.get('levelStarts'), timetables: json.get('timetables'), maxLessonsByShift: json.get('maxLessonsByShift'), sanpin: json.get('sanpin'), rules: { ...defaultRules(), ...json.get('rules') } };
 }
 
 app.post('/api/generate', (req, res) => {
@@ -576,6 +581,7 @@ app.post('/api/generate', (req, res) => {
       levelStarts: json.get('levelStarts'),
       timetables: json.get('timetables'),
       sanpin: json.get('sanpin'),
+      rules: { ...defaultRules(), ...json.get('rules') },
       teacherConstraints: allTeacherConstraints(),
       teacherAvailability: allTeacherAvailability(),
       scheduleBlocks: allScheduleBlocks()
