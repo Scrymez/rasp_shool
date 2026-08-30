@@ -1573,6 +1573,23 @@ output {
   flex-wrap: wrap;
 }
 
+.rule-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 0;
+}
+
+.rule-row + .rule-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.rule-row .rule-config-btn {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 .rule-config-btn {
   display: inline-flex;
   align-items: center;

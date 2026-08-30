@@ -1120,11 +1120,11 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
     await refresh();
     setNotice('Настройка сохранена');
   }
-  // Toggle the early-only rule for one class (active = rule ON = not in exceptions).
-  async function toggleClassEarly(classId, active) {
-    const set = new Set(rules.earlyOnlyExceptions || []);
+  // Toggle a per-class rule override (active = rule ON = class NOT in exceptions list).
+  async function toggleClassException(exKey, classId, active) {
+    const set = new Set(rules[exKey] || []);
     if (active) set.delete(classId); else set.add(classId);
-    const next = { ...rules, earlyOnlyExceptions: [...set] };
+    const next = { ...rules, [exKey]: [...set] };
     setRules(next);
     await api('/settings', { method: 'POST', body: { rules: next } });
     await refresh();
@@ -1200,58 +1200,76 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
   return (
     <section className="constraints-layout">
       <div className="panel wide-panel">
-        <div className="rule-head">
-          <PanelTitle icon={ShieldCheck} title="Правила составления" />
+        <PanelTitle icon={ShieldCheck} title="Правила составления" />
+        <div className="rule-row">
+          <label className="rule-toggle">
+            <input type="checkbox" checked={rules.earlyOnlyMathRussian !== false}
+              onChange={(e) => toggleRule('earlyOnlyMathRussian', e.target.checked)} />
+            <span className="rule-switch" aria-hidden="true"></span>
+            <span className="rule-text">
+              <b>Математика и русский язык в 5–6 классах — только 1–4 урок</b>
+              <small>
+                Выключите, чтобы разрешить ставить эти предметы на любой урок в 5–6 классах.
+                {(rules.earlyOnlyExceptions || []).length > 0 && rules.earlyOnlyMathRussian !== false
+                  ? ` Выключено для ${(rules.earlyOnlyExceptions || []).length} кл.` : ''}
+              </small>
+            </span>
+          </label>
           <button className="rule-config-btn" disabled={rules.earlyOnlyMathRussian === false}
-            onClick={() => setRulesModal(true)}
+            onClick={() => setRulesModal('early')}
             title={rules.earlyOnlyMathRussian === false ? 'Правило выключено полностью' : 'Настроить по классам'}>
             <Pencil size={16} /> Настроить
           </button>
         </div>
-        <label className="rule-toggle">
-          <input type="checkbox" checked={rules.earlyOnlyMathRussian !== false}
-            onChange={(e) => toggleRule('earlyOnlyMathRussian', e.target.checked)} />
-          <span className="rule-switch" aria-hidden="true"></span>
-          <span className="rule-text">
-            <b>Математика и русский язык в 5–6 классах — только 1–4 урок</b>
-            <small>Выключите, чтобы разрешить ставить эти предметы на любой урок в 5–6 классах. «Настроить» — включить/выключить для отдельных классов.</small>
-          </span>
-        </label>
-        {(rules.earlyOnlyExceptions || []).length > 0 && rules.earlyOnlyMathRussian !== false && (
-          <p className="hint">Выключено для {(rules.earlyOnlyExceptions || []).length} кл. — нажмите «Настроить».</p>
-        )}
-        <label className="rule-toggle">
-          <input type="checkbox" checked={rules.technologyPaired57 !== false}
-            onChange={(e) => toggleRule('technologyPaired57', e.target.checked)} />
-          <span className="rule-switch" aria-hidden="true"></span>
-          <span className="rule-text">
-            <b>Технология в 5–7 классах — двумя уроками подряд в один день</b>
-            <small>Выключите, чтобы разрешить ставить технологию по одному уроку в разные дни.</small>
-          </span>
-        </label>
+        <div className="rule-row">
+          <label className="rule-toggle">
+            <input type="checkbox" checked={rules.technologyPaired57 !== false}
+              onChange={(e) => toggleRule('technologyPaired57', e.target.checked)} />
+            <span className="rule-switch" aria-hidden="true"></span>
+            <span className="rule-text">
+              <b>Технология в 5–7 классах — двумя уроками подряд в один день</b>
+              <small>
+                Выключите, чтобы разрешить ставить технологию по одному уроку в разные дни.
+                {(rules.technologyPaired57Exceptions || []).length > 0 && rules.technologyPaired57 !== false
+                  ? ` Выключено для ${(rules.technologyPaired57Exceptions || []).length} кл.` : ''}
+              </small>
+            </span>
+          </label>
+          <button className="rule-config-btn" disabled={rules.technologyPaired57 === false}
+            onClick={() => setRulesModal('tech')}
+            title={rules.technologyPaired57 === false ? 'Правило выключено полностью' : 'Настроить по классам'}>
+            <Pencil size={16} /> Настроить
+          </button>
+        </div>
       </div>
-      {rulesModal && (
-        <ModalFrame label="Правило по классам" className="rule-classes-modal" onClose={() => setRulesModal(false)}>
-          <h3>Только 1–4 урок — по классам</h3>
-          <p className="hint">Правило действует только на 5–6 классы. Выключите ползунок, чтобы в этом классе математику/русский можно было ставить на любой урок.</p>
-          <div className="rule-class-list">
-            {state.classes.filter((c) => c.grade === 5 || c.grade === 6).sort((a, b) => a.grade - b.grade || String(a.letter).localeCompare(b.letter, 'ru')).map((c) => {
-              const active = !(rules.earlyOnlyExceptions || []).includes(c.id);
-              return (
-                <label className="rule-class-row" key={c.id}>
-                  <span className="rule-class-name">{c.grade}{c.letter} · {shiftName(state, c.shift)}</span>
-                  <span className="rule-class-toggle">
-                    <input type="checkbox" checked={active} onChange={(e) => toggleClassEarly(c.id, e.target.checked)} />
-                    <span className="rule-switch" aria-hidden="true"></span>
-                    <span className="rule-class-state">{active ? 'только 1–4' : 'любой урок'}</span>
-                  </span>
-                </label>
-              );
-            })}
-            {state.classes.filter((c) => c.grade === 5 || c.grade === 6).length === 0 && <p className="hint">Нет 5–6 классов.</p>}
-          </div>
-        </ModalFrame>
-      )}
+      {rulesModal && (() => {
+        const cfg = rulesModal === 'tech'
+          ? { exKey: 'technologyPaired57Exceptions', grades: [5, 6, 7], title: 'Технология подряд — по классам', note: 'Правило действует на 5–7 классы. Выключите ползунок, чтобы в этом классе технологию можно было ставить по одному уроку в разные дни.', on: 'подряд', off: 'по 1 уроку' }
+          : { exKey: 'earlyOnlyExceptions', grades: [5, 6], title: 'Только 1–4 урок — по классам', note: 'Правило действует на 5–6 классы. Выключите ползунок, чтобы в этом классе математику/русский можно было ставить на любой урок.', on: 'только 1–4', off: 'любой урок' };
+        const list = state.classes.filter((c) => cfg.grades.includes(c.grade)).sort((a, b) => a.grade - b.grade || String(a.letter).localeCompare(b.letter, 'ru'));
+        return (
+          <ModalFrame label="Правило по классам" className="rule-classes-modal" onClose={() => setRulesModal(false)}>
+            <h3>{cfg.title}</h3>
+            <p className="hint">{cfg.note}</p>
+            <div className="rule-class-list">
+              {list.map((c) => {
+                const active = !(rules[cfg.exKey] || []).includes(c.id);
+                return (
+                  <label className="rule-class-row" key={c.id}>
+                    <span className="rule-class-name">{c.grade}{c.letter} · {shiftName(state, c.shift)}</span>
+                    <span className="rule-class-toggle">
+                      <input type="checkbox" checked={active} onChange={(e) => toggleClassException(cfg.exKey, c.id, e.target.checked)} />
+                      <span className="rule-switch" aria-hidden="true"></span>
+                      <span className="rule-class-state">{active ? cfg.on : cfg.off}</span>
+                    </span>
+                  </label>
+                );
+              })}
+              {list.length === 0 && <p className="hint">Нет подходящих классов.</p>}
+            </div>
+          </ModalFrame>
+        );
+      })()}
       <div className="panel wide-panel" ref={blocksRef}>
         <div className="segmented">
           <button className="export-link" onClick={async () => { await downloadFile('/export/constraints.xlsx'); setNotice('Ограничения выгружены в Excel'); }}><FileSpreadsheet size={18} /> Скачать все ограничения (Excel)</button>

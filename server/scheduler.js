@@ -902,7 +902,8 @@ function expandAssignment(item, variant = 'single', weekMode = 'one', settings =
   const isTech57 = isTech && grade >= 5 && grade <= 7;
   // Technology in 5-7 is fully governed by the toggle (overrides the stored paired
   // flag); other subjects keep their own «Подряд» flag.
-  const tech57On = isTech57 && settings.rules?.technologyPaired57 !== false;
+  const tech57On = isTech57 && settings.rules?.technologyPaired57 !== false
+    && !(settings.rules?.technologyPaired57Exceptions || []).includes(item.classId);
   // ON: force technology 5-7 into an atomic same-day consecutive pair. OFF: keep the
   // stored «Подряд» flag (soft — may double or split), unchanged from before.
   const paired = tech57On ? true : Boolean(item.paired);

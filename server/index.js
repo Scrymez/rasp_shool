@@ -559,7 +559,7 @@ app.post('/api/settings', (req, res) => {
 });
 
 function defaultRules() {
-  return { earlyOnlyMathRussian: true, earlyOnlyExceptions: [], technologyPaired57: true };
+  return { earlyOnlyMathRussian: true, earlyOnlyExceptions: [], technologyPaired57: true, technologyPaired57Exceptions: [] };
 }
 
 function settingsPayload() {
