@@ -104,7 +104,7 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
     const queue = [];
     for (const schoolClass of classOrder) {
       const ctx = ctxByKey[classKey(schoolClass)];
-      for (const lesson of lessonsForClass(assignments, schoolClass.id, strategy, variant, weekMode)) {
+      for (const lesson of lessonsForClass(assignments, schoolClass.id, strategy, variant, weekMode, settings)) {
         queue.push({ lesson, ctx });
       }
     }
@@ -120,9 +120,20 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
     });
 
     const unplaced = [];
+    const placedPairs = new Set();
+    const attemptedPairs = new Set();
     for (const { lesson, ctx } of queue) {
       const { schoolClass, key, shift, classPeriods } = ctx;
       const grid = payload.classes[key][variant];
+      // Same-day consecutive pair (technology 5-7, «Подряд» subjects): place both at once.
+      if (lesson.pairId) {
+        if (placedPairs.has(lesson.pairId)) continue;
+        if (attemptedPairs.has(lesson.pairId)) { unplaced.push({ lesson, ctx }); continue; }
+        attemptedPairs.add(lesson.pairId);
+        const done = placePairConsecutive({ grid, days, periods: classPeriods, lesson, busy, settings, schoolClass, shift, variant, strategy });
+        if (done) placedPairs.add(lesson.pairId); else unplaced.push({ lesson, ctx });
+        continue;
+      }
       const slot = bestSlot({ grid, days, periods: classPeriods, lesson, busy, settings, schoolClass, shift, variant, strategy });
       if (!slot) { unplaced.push({ lesson, ctx }); continue; }
       grid[slot.day.id][slot.period.number] = lessonToCell(lesson);
@@ -406,8 +417,9 @@ function randomLegalSwap({ payload, settings, key, meta, grade, variant, grid, d
     const b = slots[Math.floor(rng() * slots.length)];
     if (a.day.id === b.day.id && a.period.number === b.period.number) continue;
     const cellA = grid[a.day.id][a.period.number];
-    if (!cellA) continue;
+    if (!cellA || cellA.pairLock) continue;
     const cellB = grid[b.day.id]?.[b.period.number] || null;
+    if (cellB?.pairLock) continue;
     grid[a.day.id][a.period.number] = cellB;
     grid[b.day.id][b.period.number] = cellA;
     const legal = cellPlaceable(payload, settings, key, meta, grade, variant, cellA, b.day, b.period)
@@ -434,6 +446,7 @@ function restoreGrid(grid, snap, days) {
 function trySwapImprove(payload, settings, key, meta, grade, variant, grid, days, a, b) {
   const cellA = grid[a.day.id][a.period.number];
   const cellB = grid[b.day.id]?.[b.period.number] || null;
+  if (cellA?.pairLock || cellB?.pairLock) return false; // keep technology 5-7 pairs intact
   const before = localGridScore(grid, grade, days);
   // Tentatively swap (swaps only affect this class, so a local score suffices).
   grid[a.day.id][a.period.number] = cellB;
@@ -454,6 +467,7 @@ function trySwapImprove(payload, settings, key, meta, grade, variant, grid, days
 // empty cell, or move one occupied lesson to another legal empty cell so the
 // stuck lesson fits. Every trial is validated against the hard rules.
 function tryPlaceUnplaced(payload, settings, key, meta, grade, variant, grid, days, classPeriods, lesson) {
+  if (lesson.pairId) return false; // tech 5-7 pairs must be placed as a same-day pair
   const L = lessonToCell(lesson);
   // 1) A legal empty cell (the greedy pass may have missed one after balancing).
   for (const day of days) {
@@ -470,7 +484,7 @@ function tryPlaceUnplaced(payload, settings, key, meta, grade, variant, grid, da
   for (const day of days) {
     for (const period of classPeriods) {
       const M = grid[day.id]?.[period.number];
-      if (!M) continue;
+      if (!M || M.pairLock) continue;
       grid[day.id][period.number] = L;
       if (cellPlaceable(payload, settings, key, meta, grade, variant, L, day, period)) {
         for (const d2 of days) {
@@ -636,7 +650,8 @@ function lessonToCell(lesson) {
     room: lesson.roomName || '',
     roomId: lesson.roomId || null,
     difficulty: lesson.difficulty,
-    paired: lesson.paired ? 1 : 0
+    paired: lesson.paired ? 1 : 0,
+    pairLock: lesson.pairId ? 1 : 0
   };
 }
 
@@ -656,6 +671,7 @@ function cellToLesson(cell) {
 // Move a flexible lesson out of a slot the stuck lesson could use, into any free cell (same or other
 // day), then place the stuck lesson. Keeps per-day capacity valid.
 function tryRelocateToFit(payload, { lesson: L, ctx }, { busy, settings, days, variant }) {
+  if (L.pairId) return false; // tech 5-7 pairs are placed atomically, not relocated singly
   const { schoolClass, shift, classPeriods, key } = ctx;
   const level = schoolClass.level;
   const grid = payload.classes[key][variant];
@@ -663,7 +679,7 @@ function tryRelocateToFit(payload, { lesson: L, ctx }, { busy, settings, days, v
   for (const day of days) {
     for (const period of classPeriods) {
       const cellM = grid[day.id]?.[period.number];
-      if (!cellM) continue;
+      if (!cellM || cellM.pairLock) continue;
       if (cellM.teacherKey && cellM.teacherKey === L.teacherKey) continue; // same teacher — swap won't help
       const mLesson = cellToLesson(cellM);
       grid[day.id][period.number] = null;
@@ -700,6 +716,7 @@ function tryRelocateToFit(payload, { lesson: L, ctx }, { busy, settings, days, v
 // Cross-class repair: the stuck teacher T has an empty, allowed slot in class C, but is busy there
 // because T teaches another class C2 at that time. Move T's C2 lesson to a free slot, then place L in C.
 function tryCrossClassRelocate(payload, { lesson: L, ctx }, { busy, settings, days, variant }) {
+  if (L.pairId) return false;
   const T = L.teacherKey;
   if (!T) return false;
   const { schoolClass: C, shift, classPeriods, key } = ctx;
@@ -725,7 +742,7 @@ function tryCrossClassRelocate(payload, { lesson: L, ctx }, { busy, settings, da
         const periods2 = timetableFor(settings, meta2.level, meta2.shift).periods;
         for (const p2 of periods2) {
           const cell2 = grid2[day.id]?.[p2.number];
-          if (!cell2 || cell2.teacherKey !== T) continue;
+          if (!cell2 || cell2.pairLock || cell2.teacherKey !== T) continue;
           if (!intervalsOverlap(wantInterval, periodInterval(settings, meta2.level, meta2.shift, p2.number))) continue;
           // relocate cell2 within C2 to a free slot where T is free
           const m2 = cellToLesson(cell2);
@@ -787,7 +804,7 @@ function compactClass(payload, ctx, { busy, settings, days, variant }) {
       for (const p of classPeriods) {
         if (p.number <= hole.number) continue;
         const cell = grid[day.id]?.[p.number];
-        if (!cell) continue;
+        if (!cell || cell.pairLock) continue; // keep technology 5-7 pairs together
         const lesson = cellToLesson(cell);
         grid[day.id][p.number] = null;
         releaseResource({ busy, settings, variant, level, shift, dayId: day.id, period: p, lesson });
@@ -825,6 +842,7 @@ function balanceClassDays(payload, ctx, { busy, settings, days, variant }) {
     let moved = false;
     for (const q of heavyUsed) {
       const cell = grid[heavy.id][q.number];
+      if (cell.pairLock) continue; // dont split technology 5-7 pairs
       const lesson = cellToLesson(cell);
       grid[heavy.id][q.number] = null;
       releaseResource({ busy, settings, variant, level, shift, dayId: heavy.id, period: q, lesson });
@@ -848,10 +866,10 @@ function findClassId(payload, key) {
   return payload.classMeta[key]?.id ?? null;
 }
 
-function lessonsForClass(assignments, classId, strategy, variant = 'single', weekMode = 'one') {
+function lessonsForClass(assignments, classId, strategy, variant = 'single', weekMode = 'one', settings = {}) {
   return assignments
     .filter((item) => item.classId === classId)
-    .flatMap((item) => expandAssignment(item, variant, weekMode))
+    .flatMap((item) => expandAssignment(item, variant, weekMode, settings))
     .sort((a, b) => {
       const constraintDelta = lessonConstraintWeight(b) - lessonConstraintWeight(a);
       if (constraintDelta !== 0) return constraintDelta;
@@ -876,9 +894,27 @@ function lessonCountForVariant(weeklyHours, variant, weekMode) {
   return count;
 }
 
-function expandAssignment(item, variant = 'single', weekMode = 'one') {
+function expandAssignment(item, variant = 'single', weekMode = 'one', settings = {}) {
   const count = lessonCountForVariant(item.weeklyHours, variant, weekMode);
-  return Array.from({ length: count }, (_, index) => ({ ...item, copy: index, teacherKey: teacherKeyOf(item.teacherName) }));
+  // Technology in grades 5-7 is placed as a same-day consecutive pair when the rule is on.
+  const grade = Number(item.grade);
+  const isTech = String(item.subjectName || '').trim().toLowerCase() === 'технология';
+  const isTech57 = isTech && grade >= 5 && grade <= 7;
+  // Technology in 5-7 is fully governed by the toggle (overrides the stored paired
+  // flag); other subjects keep their own «Подряд» flag.
+  const tech57On = isTech57 && settings.rules?.technologyPaired57 !== false;
+  // ON: force technology 5-7 into an atomic same-day consecutive pair. OFF: keep the
+  // stored «Подряд» flag (soft — may double or split), unchanged from before.
+  const paired = tech57On ? true : Boolean(item.paired);
+  const pairedCount = Math.floor(count / 2) * 2; // lone remainder placed singly
+  const atomic = tech57On;
+  return Array.from({ length: count }, (_, index) => ({
+    ...item,
+    copy: index,
+    teacherKey: teacherKeyOf(item.teacherName),
+    paired: paired ? 1 : 0,
+    pairId: atomic && index < pairedCount ? `${item.id}-${variant}-${Math.floor(index / 2)}` : null
+  }));
 }
 
 function lessonConstraintWeight(lesson) {
@@ -892,6 +928,35 @@ function emptyGrid(days, periods) {
     for (const period of periods) grid[day.id][period.number] = null;
   }
   return grid;
+}
+
+// Place two consecutive lessons of the same subject on one day (best-scored day/pair).
+function placePairConsecutive({ grid, days, periods, lesson, busy, settings, schoolClass, shift, variant, strategy }) {
+  const level = schoolClass.level;
+  const sorted = [...periods].sort((a, b) => a.number - b.number);
+  let best = null;
+  for (const day of rotateDays(days, strategy.dayOffset)) {
+    for (let i = 0; i < sorted.length - 1; i += 1) {
+      const p1 = sorted[i];
+      const p2 = sorted[i + 1];
+      if (p2.number !== p1.number + 1) continue;
+      if (grid[day.id]?.[p1.number] || grid[day.id]?.[p2.number]) continue;
+      if (hardBlockReason({ grid, day, period: p1, lesson, busy, settings, schoolClass, shift, variant })) continue;
+      grid[day.id][p1.number] = lessonToCell(lesson);
+      reserveResource({ busy, settings, variant, level, shift, dayId: day.id, period: p1, lesson });
+      const p2ok = !hardBlockReason({ grid, day, period: p2, lesson, busy, settings, schoolClass, shift, variant });
+      const score = p2ok ? slotScore({ grid, days, day, period: p1, periods, lesson, settings, schoolClass, shift, strategy }) : Infinity;
+      grid[day.id][p1.number] = null;
+      releaseResource({ busy, settings, variant, level, shift, dayId: day.id, period: p1, lesson });
+      if (p2ok && (!best || score < best.score)) best = { day, p1, p2, score };
+    }
+  }
+  if (!best) return false;
+  grid[best.day.id][best.p1.number] = lessonToCell(lesson);
+  reserveResource({ busy, settings, variant, level, shift, dayId: best.day.id, period: best.p1, lesson });
+  grid[best.day.id][best.p2.number] = lessonToCell(lesson);
+  reserveResource({ busy, settings, variant, level, shift, dayId: best.day.id, period: best.p2, lesson });
+  return true;
 }
 
 function bestSlot({ grid, days, periods, lesson, busy, settings, schoolClass, shift, variant, strategy }) {

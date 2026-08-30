@@ -559,7 +559,7 @@ app.post('/api/settings', (req, res) => {
 });
 
 function defaultRules() {
-  return { earlyOnlyMathRussian: true, earlyOnlyExceptions: [] };
+  return { earlyOnlyMathRussian: true, earlyOnlyExceptions: [], technologyPaired57: true };
 }
 
 function settingsPayload() {
@@ -674,6 +674,13 @@ app.get('/api/export/schedules/:id/final.xlsx', (req, res) => {
   if (!row) return res.status(404).send('Расписание не найдено');
   const payload = JSON.parse(row.payload);
   sendXlsx(res, `Расписание-школы-${row.id}.xlsx`, scheduleFinalSheets(payload));
+});
+
+app.get('/api/export/schedules/:id/teacher-grid.xlsx', (req, res) => {
+  const row = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).send('Расписание не найдено');
+  const payload = JSON.parse(row.payload);
+  sendXlsx(res, `Занятость-учителей-${row.id}.xlsx`, [teacherOccupancySheet(payload)]);
 });
 
 app.get('/api/export/schedules/:id.xlsx', async (req, res) => {
@@ -1469,6 +1476,48 @@ function scheduleFinalSheets(payload) {
     }
     return { name: sheetName(week), rows, merges };
   });
+}
+
+// Teacher occupancy grid: for each teacher — which day, which lesson (column),
+// which class. Rows are teacher × week × day; a cell holds the class and subject.
+function teacherOccupancySheet(payload) {
+  const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const variants = [...new Set(Object.values(payload.classes || {}).flatMap((w) => Object.keys(w)))];
+  const twoWeeks = variants.length > 1;
+  // index[`${teacherKey}|${week}|${dayId}|${period}`] = "Класс\nПредмет"; also collect display names.
+  const index = new Map();
+  const nameByKey = new Map();
+  for (const [className, weeks] of Object.entries(payload.classes || {})) {
+    for (const [week, grid] of Object.entries(weeks)) {
+      for (const day of payload.days || []) {
+        for (const period of payload.periods || []) {
+          const cell = grid[day.id]?.[period.number];
+          if (!cell?.teacher || cell.teacher === 'Не назначен') continue;
+          const key = norm(cell.teacher);
+          nameByKey.set(key, cell.teacher);
+          index.set(`${key}|${week}|${day.id}|${period.number}`, `${className}\n${cell.subject}`);
+        }
+      }
+    }
+  }
+  const teachers = [...nameByKey.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ru'));
+  const header = ['Учитель', ...(twoWeeks ? ['Неделя'] : []), 'День', ...payload.periods.map((p) => `${p.number} урок`)];
+  const rows = [header];
+  const keys = [];
+  for (const [key, name] of teachers) {
+    for (const week of variants) {
+      for (const day of payload.days || []) {
+        rows.push([
+          name,
+          ...(twoWeeks ? [weekLabel(week)] : []),
+          day.name,
+          ...payload.periods.map((p) => index.get(`${key}|${week}|${day.id}|${p.number}`) || '')
+        ]);
+        keys.push(key);
+      }
+    }
+  }
+  return { name: 'Занятость учителей', rows, merges: mergeFirstColumn(rows, keys) };
 }
 
 function scheduleGridSheets(payload) {

@@ -1220,6 +1220,15 @@ function Constraints({ state, refresh, setNotice, registerCommit }) {
         {(rules.earlyOnlyExceptions || []).length > 0 && rules.earlyOnlyMathRussian !== false && (
           <p className="hint">Выключено для {(rules.earlyOnlyExceptions || []).length} кл. — нажмите «Настроить».</p>
         )}
+        <label className="rule-toggle">
+          <input type="checkbox" checked={rules.technologyPaired57 !== false}
+            onChange={(e) => toggleRule('technologyPaired57', e.target.checked)} />
+          <span className="rule-switch" aria-hidden="true"></span>
+          <span className="rule-text">
+            <b>Технология в 5–7 классах — двумя уроками подряд в один день</b>
+            <small>Выключите, чтобы разрешить ставить технологию по одному уроку в разные дни.</small>
+          </span>
+        </label>
       </div>
       {rulesModal && (
         <ModalFrame label="Правило по классам" className="rule-classes-modal" onClose={() => setRulesModal(false)}>
@@ -1705,6 +1714,7 @@ function Generate({ state, selectedClasses, setSelectedClasses, weekMode, setWee
         <div className="export-row">
           <button className="export-link primary-export" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}/final.xlsx`)}><Printer size={18} /> Печатная форма</button>
           <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}.grid.xlsx`)}><FileSpreadsheet size={18} /> Все расписание</button>
+          <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}/teacher-grid.xlsx`)}><FileSpreadsheet size={18} /> Занятость учителей (сетка)</button>
           <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${schedule.id}/log.xlsx`)}><FileSpreadsheet size={18} /> Журнал логов (Excel)</button>
         </div>
       )}
