@@ -1484,10 +1484,13 @@ function teacherOccupancySheet(payload) {
   const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
   const variants = [...new Set(Object.values(payload.classes || {}).flatMap((w) => Object.keys(w)))];
   const twoWeeks = variants.length > 1;
-  // index[`${teacherKey}|${week}|${dayId}|${period}`] = "Класс\nПредмет"; also collect display names.
+  // Lesson numbers differ in time between shifts, so a teacher is split by shift:
+  // index[`${teacherKey}|${week}|${shift}|${dayId}|${period}`] = "Класс\nПредмет".
   const index = new Map();
   const nameByKey = new Map();
+  const shiftsByKey = new Map(); // teacherKey -> Set of shifts they work
   for (const [className, weeks] of Object.entries(payload.classes || {})) {
+    const shift = payload.classMeta?.[className]?.shift || 'morning';
     for (const [week, grid] of Object.entries(weeks)) {
       for (const day of payload.days || []) {
         for (const period of payload.periods || []) {
@@ -1495,25 +1498,31 @@ function teacherOccupancySheet(payload) {
           if (!cell?.teacher || cell.teacher === 'Не назначен') continue;
           const key = norm(cell.teacher);
           nameByKey.set(key, cell.teacher);
-          index.set(`${key}|${week}|${day.id}|${period.number}`, `${className}\n${cell.subject}`);
+          (shiftsByKey.get(key) || shiftsByKey.set(key, new Set()).get(key)).add(shift);
+          index.set(`${key}|${week}|${shift}|${day.id}|${period.number}`, `${className}\n${cell.subject}`);
         }
       }
     }
   }
+  const shiftOrder = { morning: 0, afternoon: 1 };
   const teachers = [...nameByKey.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ru'));
-  const header = ['Учитель', ...(twoWeeks ? ['Неделя'] : []), 'День', ...payload.periods.map((p) => `${p.number} урок`)];
+  const header = ['Учитель', 'Смена', ...(twoWeeks ? ['Неделя'] : []), 'День', ...payload.periods.map((p) => `${p.number} урок`)];
   const rows = [header];
   const keys = [];
   for (const [key, name] of teachers) {
-    for (const week of variants) {
-      for (const day of payload.days || []) {
-        rows.push([
-          name,
-          ...(twoWeeks ? [weekLabel(week)] : []),
-          day.name,
-          ...payload.periods.map((p) => index.get(`${key}|${week}|${day.id}|${p.number}`) || '')
-        ]);
-        keys.push(key);
+    const shifts = [...(shiftsByKey.get(key) || ['morning'])].sort((a, b) => (shiftOrder[a] ?? 9) - (shiftOrder[b] ?? 9));
+    for (const shift of shifts) {
+      for (const week of variants) {
+        for (const day of payload.days || []) {
+          rows.push([
+            name,
+            shiftLabel(payload, shift),
+            ...(twoWeeks ? [weekLabel(week)] : []),
+            day.name,
+            ...payload.periods.map((p) => index.get(`${key}|${week}|${shift}|${day.id}|${p.number}`) || '')
+          ]);
+          keys.push(key);
+        }
       }
     }
   }
