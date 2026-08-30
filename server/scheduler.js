@@ -20,6 +20,7 @@ export function generateSchedule({ classes, assignments, settings, classIds, wee
   if (settings.optimize !== false) {
     for (const variant of variants) optimizeSchedule(best, { settings, days, variant });
     for (const variant of variants) pullToFrontAll(best, { settings, days, variant });
+    retryUnplacedPairs(best, settings, days);
     detectTeacherClashes(best);
     best.quality = {
       strategy: best.quality?.strategy,
@@ -157,12 +158,22 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
 
     // Targeted backtracking: for still-unplaced lessons, free a slot by moving one
     // existing lesson elsewhere in the same class (2-level search). Validated the
-    // same way as the polish pass, so no hard rule can be broken.
+    // same way as the polish pass, so no hard rule can be broken. Balancing/compacting
+    // may have freed a consecutive pair, so retry unplaced technology pairs here too.
+    const retriedPairs = new Set();
     for (const item of unplaced) {
       if (item.placed) continue;
-      const { schoolClass, key, classPeriods } = item.ctx;
+      const { schoolClass, key, shift, classPeriods } = item.ctx;
       const grid = payload.classes[key][variant];
       const meta = payload.classMeta[key];
+      if (item.lesson.pairId) {
+        if (retriedPairs.has(item.lesson.pairId)) continue;
+        retriedPairs.add(item.lesson.pairId);
+        if (placePairConsecutive({ grid, days, periods: classPeriods, lesson: item.lesson, busy, settings, schoolClass, shift, variant, strategy })) {
+          for (const other of unplaced) if (other.lesson.pairId === item.lesson.pairId) other.placed = true;
+        }
+        continue;
+      }
       if (tryPlaceUnplaced(payload, settings, key, meta, schoolClass.grade, variant, grid, days, classPeriods, item.lesson)) {
         item.placed = true;
       }
@@ -172,7 +183,12 @@ function buildSchedule({ selected, assignments, settings, days, periods, variant
       if (placed) continue;
       const { schoolClass, key, shift, classPeriods } = ctx;
       const grid = payload.classes[key][variant];
-      const reason = diagnoseFailure({ grid, days, periods: classPeriods, lesson, busy, settings, schoolClass, shift, variant });
+      const reason = lesson.pairId
+        ? { code: 'pair-no-slot', text: 'нет двух свободных уроков подряд в один день для спаренной технологии' }
+        : diagnoseFailure({ grid, days, periods: classPeriods, lesson, busy, settings, schoolClass, shift, variant });
+      if (lesson.pairId) {
+        (payload.unplacedPairs ||= []).push({ key, variant, cell: lessonToCell(lesson), pairId: lesson.pairId });
+      }
       payload.diagnostics.push({
         level: 'warning',
         className: key,
@@ -358,6 +374,46 @@ function optimizeSchedule(payload, { settings, days, variant }) {
 // Shift a whole day up so it starts at lesson 1, one step at a time, but only when
 // every lesson can legally move one lesson earlier — so the block stays contiguous
 // and no new internal gap appears. A blocked/unavailable lesson-1 stops the shift.
+// After polishing (which can free a consecutive pair), retry placing technology
+// pairs that stayed unplaced, validated the payload-based way, and drop their
+// diagnostics on success.
+function retryUnplacedPairs(payload, settings, days) {
+  const placed = new Set();
+  for (const up of payload.unplacedPairs || []) {
+    if (placed.has(up.pairId)) continue;
+    const grid = payload.classes[up.key]?.[up.variant];
+    if (!grid) continue;
+    const meta = payload.classMeta[up.key];
+    const grade = gradeFromKey(up.key);
+    const classPeriods = timetableFor(settings, meta.level, meta.shift).periods;
+    if (placePairPayload(payload, settings, up.key, meta, grade, up.variant, grid, days, classPeriods, up.cell)) {
+      placed.add(up.pairId);
+      payload.diagnostics = payload.diagnostics.filter((d) => !(d.className === up.key && d.week === up.variant && d.reasonCode === 'pair-no-slot' && d.subject === up.cell.subject));
+    }
+  }
+}
+
+function placePairPayload(payload, settings, key, meta, grade, variant, grid, days, classPeriods, cell) {
+  const sorted = [...classPeriods].sort((a, b) => a.number - b.number);
+  for (const day of days) {
+    for (let i = 0; i < sorted.length - 1; i += 1) {
+      const p1 = sorted[i];
+      const p2 = sorted[i + 1];
+      if (p2.number !== p1.number + 1) continue;
+      if (grid[day.id]?.[p1.number] || grid[day.id]?.[p2.number]) continue;
+      grid[day.id][p1.number] = { ...cell };
+      grid[day.id][p2.number] = { ...cell };
+      if (cellPlaceable(payload, settings, key, meta, grade, variant, cell, day, p1)
+        && cellPlaceable(payload, settings, key, meta, grade, variant, cell, day, p2)
+        && respectsSubjectPlacementRules(grid, grade)
+        && dayWithinLimits(grid, settings, grade, day.id)) return true;
+      grid[day.id][p1.number] = null;
+      grid[day.id][p2.number] = null;
+    }
+  }
+  return false;
+}
+
 function pullToFrontAll(payload, { settings, days, variant }) {
   for (const [key, weeks] of Object.entries(payload.classes)) {
     const grid = weeks[variant];
@@ -572,7 +628,10 @@ function resourceBusyElsewhere(payload, settings, thisKey, meta, variant, kind, 
 // One physical teacher may be stored as several rows (one per subject), each with
 // its own id. The person's identity for scheduling is their normalized full name.
 function teacherKeyOf(name) {
-  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const n = String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  // Placeholders are NOT a real person — no teacher identity, so they never conflict.
+  if (!n || n === 'вакансия' || n === 'не назначен' || n === 'вакант') return '';
+  return n;
 }
 
 // After generation, flag any teacher standing in two classes at the same time

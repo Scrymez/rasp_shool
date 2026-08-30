@@ -1762,7 +1762,8 @@ function findCellConflicts(schedule, className, week, dayId, periodNumber) {
       if (!other) continue;
       if (!intervalsOverlapFE(myIv, periodIntervalFE(schedule, om.level, om.shift, Number(num)))) continue;
       const info = { className: otherName, dayName, periodNumber: Number(num), subject: other.subject, teacher: other.teacher, room: other.room };
-      if (cell.teacher && normTeacher(cell.teacher) === normTeacher(other.teacher)) conflicts.push({ kind: 'teacher', ...info });
+      const tk = normTeacher(cell.teacher);
+      if (tk && tk === normTeacher(other.teacher)) conflicts.push({ kind: 'teacher', ...info });
       const sameRoom = cell.roomId != null && other.roomId != null ? cell.roomId === other.roomId : Boolean(cell.room) && cell.room === other.room;
       if (sameRoom) conflicts.push({ kind: 'room', ...info });
     }
@@ -1775,7 +1776,10 @@ const MATH_FAMILY = ['Математика', 'Алгебра', 'Геометри
 // A teacher may be stored as several rows (one per subject). Their identity as a
 // person is the normalized full name — compare teachers by this, never by id.
 function normTeacher(name) {
-  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const n = String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  // Placeholders are not a real person — never treat them as the same teacher.
+  if (!n || n === 'вакансия' || n === 'не назначен' || n === 'вакант') return '';
+  return n;
 }
 
 // Early-only rule (5-6 math/russian on lessons 1-4) — on globally unless the toggle
@@ -1830,7 +1834,8 @@ function slotSchoolBlocked(blocks, dayId, periodNumber, shift, classId) {
 
 // Is this teacher already teaching in ANOTHER class at an overlapping time?
 function teacherBusyElsewhere(schedule, className, week, teacherId, teacherName, dayId, periodNumber) {
-  if (!teacherName) return false;
+  const tk = normTeacher(teacherName);
+  if (!tk) return false;
   const meta = schedule.classMeta?.[className] || {};
   const myIv = periodIntervalFE(schedule, meta.level, meta.shift, periodNumber);
   for (const [otherName, weeks] of Object.entries(schedule.classes || {})) {
@@ -1839,7 +1844,7 @@ function teacherBusyElsewhere(schedule, className, week, teacherId, teacherName,
     const cells = weeks?.[week]?.[dayId];
     if (!cells) continue;
     for (const [num, other] of Object.entries(cells)) {
-      if (!other || normTeacher(teacherName) !== normTeacher(other.teacher)) continue;
+      if (!other || tk !== normTeacher(other.teacher)) continue;
       if (intervalsOverlapFE(myIv, periodIntervalFE(schedule, om.level, om.shift, Number(num)))) return true;
     }
   }
