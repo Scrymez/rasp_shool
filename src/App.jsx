@@ -28,7 +28,8 @@ const STEPS = [
   ['Время', CalendarDays],
   ['Ограничения', ShieldCheck],
   ['Система', Database],
-  ['Создание', Play]
+  ['Создание', Play],
+  ['Расписания', FolderOpen]
 ];
 
 function App() {
@@ -264,6 +265,7 @@ function App() {
               refresh={refresh}
             />
           )}
+          {step === 9 && <SavedSchedules state={state} refresh={refresh} setNotice={setNotice} />}
         </div>
 
         <div className="bottom-actions">
@@ -343,7 +345,8 @@ function TrainingPanel({ onClose }) {
     ['Связки', 'Проверьте строки класс-предмет-учитель. Здесь задается кто ведет урок, кабинет и недельные часы.'],
     ['Время', 'Настройте учебные дни, старт 1 и 2 смены, длительность каждого урока, перемены и лимиты нагрузки.'],
     ['Ограничения', 'Заблокируйте школьные слоты, например понедельник 1 урок. Для учителей задайте окно работы по дням: с какого урока приходит и после какого уходит, либо выходной.'],
-    ['Создание', 'Выберите классы и режим недели. После генерации проверьте диагностику, отчеты учителей и полный Excel-экспорт.']
+    ['Создание', 'Выберите классы и режим недели. После генерации проверьте диагностику, отчеты учителей и полный Excel-экспорт.'],
+    ['Расписания', 'Все сохранённые расписания. Откройте любое, чтобы продолжить редактирование в таблице и скачать отчёты — изменения сохраняются автоматически.']
   ];
   const checklist = [
     'У каждого класса выбрана смена.',
@@ -1650,6 +1653,64 @@ function SystemPanel({ state, refresh, setNotice, runtimeStatus }) {
           <h3>Журнал</h3>
           {state.auditLog.slice(0, 10).map((item) => <p key={item.id}>{new Date(item.createdAt).toLocaleString('ru-RU')} · {item.action} · {item.entity}</p>)}
         </div>
+      </div>
+    </section>
+  );
+}
+
+function SavedSchedules({ state, refresh, setNotice }) {
+  const [opened, setOpened] = useState(null);
+  const list = state.schedules || [];
+  async function openSchedule(id) {
+    const res = await api(`/schedules/${id}`);
+    setOpened({ id: res.id, title: res.title, ...res.schedule });
+    setNotice('Расписание открыто — редактируйте прямо в таблице');
+  }
+  async function removeSchedule(id) {
+    await api(`/schedules/${id}`, { method: 'DELETE' });
+    setOpened((prev) => (prev?.id === id ? null : prev));
+    await refresh();
+    setNotice('Расписание удалено');
+  }
+  async function downloadSchedule(path) {
+    await downloadFile(path);
+    setNotice('Файл скачан');
+  }
+  if (opened) {
+    return (
+      <section className="panel">
+        <div className="saved-head">
+          <button onClick={() => setOpened(null)}><ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} /> К списку</button>
+          <h3>{opened.title || `Расписание #${opened.id}`}</h3>
+        </div>
+        <SchedulePreview schedule={opened} setSchedule={setOpened} state={state} setNotice={setNotice} />
+        <div className="export-row">
+          <button className="export-link primary-export" onClick={() => downloadSchedule(`/export/schedules/${opened.id}/final.xlsx`)}><Printer size={18} /> Печатная форма</button>
+          <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${opened.id}.grid.xlsx`)}><FileSpreadsheet size={18} /> Все расписание</button>
+          <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${opened.id}/teacher-grid.xlsx`)}><FileSpreadsheet size={18} /> Занятость учителей (сетка)</button>
+          <button className="export-link" onClick={() => downloadSchedule(`/export/schedules/${opened.id}/log.xlsx`)}><FileSpreadsheet size={18} /> Журнал логов (Excel)</button>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section className="panel">
+      <PanelTitle icon={FolderOpen} title="Сохранённые расписания" />
+      <p className="hint">Изменения в открытом расписании (ячейки, перестановки) сохраняются автоматически и не пропадут после перезапуска.</p>
+      {!list.length && <p className="hint">Пока нет сохранённых расписаний. Создайте расписание в разделе «Создание».</p>}
+      <div className="saved-list">
+        {list.map((s) => (
+          <div className="saved-row" key={s.id}>
+            <div className="saved-info">
+              <b>{s.title || `Расписание #${s.id}`}</b>
+              <small>#{s.id} · {s.weekMode === 'two' ? 'чётная/нечётная' : 'одна неделя'} · {s.createdAt ? new Date(s.createdAt).toLocaleString('ru') : ''}</small>
+            </div>
+            <div className="segmented">
+              <button className="primary" onClick={() => openSchedule(s.id)}><Pencil size={16} /> Открыть и редактировать</button>
+              <button onClick={() => removeSchedule(s.id)} title="Удалить расписание"><Trash2 size={16} /></button>
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );

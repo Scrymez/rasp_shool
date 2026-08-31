@@ -600,6 +600,20 @@ app.get('/api/schedules/:id', (req, res) => {
   res.json({ id: row.id, title: row.title, weekMode: row.week_mode, createdAt: row.created_at, schedule: JSON.parse(row.payload) });
 });
 
+app.delete('/api/schedules/:id', (req, res) => {
+  const info = db.prepare('DELETE FROM schedules WHERE id = ?').run(req.params.id);
+  audit('delete', 'schedule', { id: req.params.id });
+  res.json({ ok: true, deleted: info.changes });
+});
+
+app.patch('/api/schedules/:id/title', (req, res) => {
+  const title = String(req.body?.title || '').trim();
+  if (!title) return res.status(400).json({ error: 'Пустое название' });
+  const info = db.prepare('UPDATE schedules SET title = ? WHERE id = ?').run(title, req.params.id);
+  audit('update', 'schedule-title', { id: req.params.id, title });
+  res.json({ ok: true, changed: info.changes });
+});
+
 app.patch('/api/schedules/:id/cell', (req, res) => {
   const body = z.object({
     className: z.string(),
