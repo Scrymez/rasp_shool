@@ -1571,6 +1571,23 @@ output {
   margin-top: 12px;
 }
 
+.rename-input {
+  width: 100%;
+  padding: 11px 13px;
+  margin: 10px 0 14px;
+  border-radius: 10px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  font-size: 15px;
+}
+
+.rename-input:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px rgba(231, 191, 103, 0.6);
+}
+
 .saved-row {
   display: flex;
   align-items: center;
