@@ -1847,8 +1847,14 @@ function findCellConflicts(schedule, className, week, dayId, periodNumber) {
       if (!other) continue;
       if (!intervalsOverlapFE(myIv, periodIntervalFE(schedule, om.level, om.shift, Number(num)))) continue;
       const info = { className: otherName, dayName, periodNumber: Number(num), subject: other.subject, teacher: other.teacher, room: other.room };
-      const tk = normTeacher(cell.teacher);
-      if (tk && tk === normTeacher(other.teacher)) conflicts.push({ kind: 'teacher', ...info });
+      const raw = normRawTeacher(cell.teacher);
+      if (raw && raw === normRawTeacher(other.teacher)) {
+        const placeholder = TEACHER_PLACEHOLDERS.has(raw);
+        // Real teacher = hard conflict. A shared «вакансия» slot warns only for the
+        // SAME subject (one future teacher can't cover both) — avoids cross-subject noise.
+        if (!placeholder) conflicts.push({ kind: 'teacher', ...info });
+        else if (cell.subject && cell.subject === other.subject) conflicts.push({ kind: 'vacancy', ...info });
+      }
       const sameRoom = cell.roomId != null && other.roomId != null ? cell.roomId === other.roomId : Boolean(cell.room) && cell.room === other.room;
       if (sameRoom) conflicts.push({ kind: 'room', ...info });
     }
@@ -1860,10 +1866,14 @@ const MATH_FAMILY = ['Математика', 'Алгебра', 'Геометри
 
 // A teacher may be stored as several rows (one per subject). Their identity as a
 // person is the normalized full name — compare teachers by this, never by id.
+const TEACHER_PLACEHOLDERS = new Set(['вакансия', 'вакант', 'не назначен']);
+function normRawTeacher(name) {
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
 function normTeacher(name) {
-  const n = String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const n = normRawTeacher(name);
   // Placeholders are not a real person — never treat them as the same teacher.
-  if (!n || n === 'вакансия' || n === 'не назначен' || n === 'вакант') return '';
+  if (!n || TEACHER_PLACEHOLDERS.has(n)) return '';
   return n;
 }
 
@@ -2182,11 +2192,13 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
             {schedule.periods.map((period) => {
               const cell = grid[day.id]?.[period.number];
               const conflicts = cell ? findCellConflicts(schedule, className, safeWeek, day.id, period.number) : [];
+              const hardConflict = conflicts.some((c) => c.kind !== 'vacancy');
+              const warnConflict = conflicts.length > 0 && !hardConflict;
               const lateHard = cell && (cell.difficulty || 0) >= 4 && period.number >= 5;
               const isWindow = !cell && period.number < lastUsed
                 && !slotSchoolBlocked(state.scheduleBlocks, day.id, period.number, classShift, schedule.classMeta?.[className]?.id);
               return (
-                <div className={`cell-button${conflicts.length ? ' cell-conflict' : ''}${lateHard ? ' cell-late-hard' : ''}${isWindow ? ' cell-window' : ''}`} key={period.number}
+                <div className={`cell-button${hardConflict ? ' cell-conflict' : ''}${warnConflict ? ' cell-warn' : ''}${lateHard ? ' cell-late-hard' : ''}${isWindow ? ' cell-window' : ''}`} key={period.number}
                   role="button" tabIndex={0}
                   onClick={() => setEdit({
                     dayId: day.id,
@@ -2204,7 +2216,7 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={() => swapCell({ dayId: day.id, periodNumber: period.number })}>
                   {conflicts.length > 0 && (
-                    <span className="conflict-badge" title="Конфликт — нажмите для деталей"
+                    <span className={`conflict-badge${warnConflict ? ' warn' : ''}`} title={warnConflict ? 'Предупреждение — нажмите для деталей' : 'Конфликт — нажмите для деталей'}
                       onClick={(event) => { event.stopPropagation(); openConflict(day.id, period.number); }}>
                       <AlertTriangle size={14} />
                     </span>
@@ -2286,13 +2298,20 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
             <div className="conflict-list">
               {conflictModal.conflicts.map((c, index) => (
                 <div className={`conflict-item ${c.kind}`} key={index}>
-                  {c.kind === 'teacher' ? (
+                  {c.kind === 'teacher' && (
                     <p>
                       Учитель <b>{c.teacher}</b> уже ведёт урок в классе <b>{c.className}</b> —
                       {' '}{c.dayName}, урок №<b>{c.periodNumber}</b> ({c.subject}
                       {c.room ? `, каб. ${c.room}` : ''}).
                     </p>
-                  ) : (
+                  )}
+                  {c.kind === 'vacancy' && (
+                    <p>
+                      Без учителя («{c.teacher}»): этот же предмет без учителя стоит в классе <b>{c.className}</b> —
+                      {' '}{c.dayName}, урок №<b>{c.periodNumber}</b> ({c.subject}). Когда назначите одного учителя, будет накладка — назначьте разных учителей или разведите время.
+                    </p>
+                  )}
+                  {c.kind === 'room' && (
                     <p>
                       Кабинет <b>{c.room}</b> занят классом <b>{c.className}</b> —
                       {' '}{c.dayName}, урок №<b>{c.periodNumber}</b> ({c.subject}).

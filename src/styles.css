@@ -1281,6 +1281,24 @@ output {
   box-shadow: inset 0 0 0 2px rgba(239, 108, 108, 0.85);
 }
 
+/* Soft warning (e.g. shared «вакансия» slot) — yellow, not a hard conflict. */
+.cell-button.cell-warn {
+  box-shadow: inset 0 0 0 2px rgba(231, 191, 103, 0.85);
+}
+
+.conflict-badge.warn {
+  background: #e7bf67;
+}
+
+.conflict-badge.warn:hover {
+  background: #f2cf82;
+}
+
+.conflict-item.vacancy {
+  background: rgba(231, 191, 103, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(231, 191, 103, 0.32);
+}
+
 /* Empty lesson that is a window (a hole before the day's last lesson, incl. a late start). */
 .cell-button.cell-window {
   background:
