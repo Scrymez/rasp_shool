@@ -11,7 +11,7 @@ import {
   allTeacherAvailability, allTeachers, allAuditLog, allClassAdvisors, audit, db, ensureAdminPasswordHash,
   json, migrate, pruneInvalidAssignments, runTransaction, setAdminPassword, verifyAdminPassword
 } from './db.js';
-import { generateSchedule } from './scheduler.js';
+import { generateSchedule, lessonCountForVariant, detectTeacherClashes } from './scheduler.js';
 
 migrate();
 
@@ -639,6 +639,8 @@ app.patch('/api/schedules/:id/cell', (req, res) => {
   payload.classes[body.className][body.week][body.dayId][body.periodNumber] = body.cell?.subject ? body.cell : null;
   payload.updatedAt = new Date().toISOString();
   payload.manualWarnings = conflicts;
+  recomputeDiagnostics(payload);
+  detectTeacherClashes(payload);
   db.prepare('UPDATE schedules SET payload = ? WHERE id = ?').run(JSON.stringify(payload), req.params.id);
   audit('update', 'schedule-cell', { scheduleId: req.params.id, className: body.className, week: body.week, dayId: body.dayId, periodNumber: body.periodNumber });
   res.json({ schedule: payload, conflicts });
@@ -663,6 +665,8 @@ app.post('/api/schedules/:id/swap', (req, res) => {
   grid[body.from.dayId][body.from.periodNumber] = toCell;
   grid[body.to.dayId][body.to.periodNumber] = fromCell;
   payload.updatedAt = new Date().toISOString();
+  recomputeDiagnostics(payload);
+  detectTeacherClashes(payload);
   db.prepare('UPDATE schedules SET payload = ? WHERE id = ?').run(JSON.stringify(payload), req.params.id);
   audit('update', 'schedule-swap', { scheduleId: req.params.id, className: body.className, week: body.week, from: body.from, to: body.to });
   res.json({ schedule: payload });
@@ -1120,6 +1124,51 @@ function autoBindSubjectsToClasses() {
     }
     pruneInvalidAssignments();
   });
+}
+
+// Recompute the unplaced-lesson warnings from the CURRENT grid vs the required
+// weekly hours, so manual edits make the warnings shrink/disappear live. Runs on
+// every cell edit and swap, and the result is persisted with the schedule.
+function recomputeDiagnostics(payload) {
+  const assignments = allAssignments();
+  const byClassId = new Map();
+  for (const a of assignments) {
+    (byClassId.get(a.classId) || byClassId.set(a.classId, []).get(a.classId)).push(a);
+  }
+  const weekMode = payload.weekMode || 'one';
+  const diags = [];
+  for (const [className, weeks] of Object.entries(payload.classes || {})) {
+    const classId = payload.classMeta?.[className]?.id;
+    const list = byClassId.get(classId) || [];
+    for (const [week, grid] of Object.entries(weeks)) {
+      const placed = new Map();
+      for (const day of payload.days || []) {
+        for (const period of payload.periods || []) {
+          const subject = grid[day.id]?.[period.number]?.subject;
+          if (subject) placed.set(subject, (placed.get(subject) || 0) + 1);
+        }
+      }
+      for (const a of list) {
+        const required = lessonCountForVariant(a.weeklyHours, week, weekMode);
+        const have = placed.get(a.subjectName) || 0;
+        const deficit = required - have;
+        for (let i = 0; i < deficit; i += 1) {
+          diags.push({
+            level: 'warning',
+            className,
+            week,
+            subject: a.subjectName,
+            teacher: a.teacherName || 'Не назначен',
+            reasonCode: 'deficit',
+            reason: 'нет свободных уроков в сетке класса (все слоты заняты)',
+            message: `Не удалось поставить ${a.subjectName} — нет свободных уроков в сетке класса (все слоты заняты)`
+          });
+        }
+      }
+    }
+  }
+  payload.diagnostics = diags;
+  return diags;
 }
 
 function manualConflicts(payload, body) {

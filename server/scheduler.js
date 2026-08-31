@@ -637,7 +637,7 @@ function teacherKeyOf(name) {
 // After generation, flag any teacher standing in two classes at the same time
 // (same shift/day/period). With teacher identity keyed by name, this catches a
 // person who teaches several subjects being double-booked across those subjects.
-function detectTeacherClashes(payload) {
+export function detectTeacherClashes(payload) {
   const dayName = new Map((payload.days || []).map((d) => [d.id, d.name]));
   // Group each teacher's lessons by (week, day) with their real time interval,
   // then flag overlapping lessons in different classes (payload holds timetables).
@@ -938,7 +938,7 @@ function lessonsForClass(assignments, classId, strategy, variant = 'single', wee
     });
 }
 
-function lessonCountForVariant(weeklyHours, variant, weekMode) {
+export function lessonCountForVariant(weeklyHours, variant, weekMode) {
   const hours = Number(weeklyHours) || 0;
   if (hours <= 0) return 0;
   const whole = Math.floor(hours);
