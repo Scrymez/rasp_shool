@@ -1672,6 +1672,16 @@ function SavedSchedules({ state, refresh, setNotice }) {
     await refresh();
     setNotice('Расписание удалено');
   }
+  async function renameSchedule(id, current) {
+    const title = window.prompt('Новое название расписания:', current || '');
+    if (title == null) return;
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    await api(`/schedules/${id}/title`, { method: 'PATCH', body: { title: trimmed } });
+    setOpened((prev) => (prev?.id === id ? { ...prev, title: trimmed } : prev));
+    await refresh();
+    setNotice('Название изменено');
+  }
   async function downloadSchedule(path) {
     await downloadFile(path);
     setNotice('Файл скачан');
@@ -1707,6 +1717,7 @@ function SavedSchedules({ state, refresh, setNotice }) {
             </div>
             <div className="segmented">
               <button className="primary" onClick={() => openSchedule(s.id)}><Pencil size={16} /> Открыть и редактировать</button>
+              <button onClick={() => renameSchedule(s.id, s.title)} title="Переименовать">Переименовать</button>
               <button onClick={() => removeSchedule(s.id)} title="Удалить расписание"><Trash2 size={16} /></button>
             </div>
           </div>
