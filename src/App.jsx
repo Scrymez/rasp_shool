@@ -1877,6 +1877,20 @@ function normTeacher(name) {
   return n;
 }
 
+// Does this teacher have an availability restriction (day-off / window / arrival-
+// departure) at this day+period? Matched by name so it works across subject rows.
+function teacherRestrictedFE(state, teacherName, dayId, periodNumber, shift) {
+  const key = normTeacher(teacherName);
+  if (!key) return false;
+  const w = (state.teacherAvailability || []).find((a) => normTeacher(a.teacherName) === key && a.dayId === dayId);
+  if (!w) return false;
+  if (w.dayOff) return true;
+  if (w.fromPeriod != null && periodNumber < w.fromPeriod) return true;
+  if (w.toPeriod != null && periodNumber > w.toPeriod) return true;
+  const wins = Array.isArray(w.windows) ? w.windows : (w.windows?.[shift] || []);
+  return wins.includes(periodNumber);
+}
+
 // Early-only rule (5-6 math/russian on lessons 1-4) — on globally unless the toggle
 // is off, and can be switched off per class via rules.earlyOnlyExceptions (class ids).
 function earlyRuleActiveFE(state, classId) {
@@ -2055,6 +2069,7 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
   const [weekName, setWeekName] = useState(weekNames[0] || '');
   const [edit, setEdit] = useState(null);
   const [draggedCell, setDraggedCell] = useState(null);
+  const [selectedCell, setSelectedCell] = useState(null);
   const [conflictModal, setConflictModal] = useState(null);
   const [lastMove, setLastMove] = useState(null);
   if (!className) return null;
@@ -2083,6 +2098,16 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
     setSchedule({ id: schedule.id, ...result.schedule });
     setNotice(result.conflicts.length ? result.conflicts.join('; ') : 'Ячейка сохранена');
     setEdit(null);
+  }
+  async function deleteCell(dayId, periodNumber) {
+    const result = await api(`/schedules/${schedule.id}/cell`, {
+      method: 'PATCH',
+      body: { className, week: safeWeek, dayId, periodNumber, cell: null }
+    });
+    setSchedule({ id: schedule.id, ...result.schedule });
+    setSelectedCell(null);
+    setEdit(null);
+    setNotice('Урок удалён');
   }
   async function swapCell(target) {
     if (!draggedCell) return;
@@ -2195,22 +2220,27 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
               const hardConflict = conflicts.some((c) => c.kind !== 'vacancy');
               const warnConflict = conflicts.length > 0 && !hardConflict;
               const lateHard = cell && (cell.difficulty || 0) >= 4 && period.number >= 5;
+              const restricted = cell && teacherRestrictedFE(state, cell.teacher, day.id, period.number, classShift);
               const isWindow = !cell && period.number < lastUsed
                 && !slotSchoolBlocked(state.scheduleBlocks, day.id, period.number, classShift, schedule.classMeta?.[className]?.id);
+              const selected = selectedCell && selectedCell.dayId === day.id && selectedCell.periodNumber === period.number;
               return (
-                <div className={`cell-button${hardConflict ? ' cell-conflict' : ''}${warnConflict ? ' cell-warn' : ''}${lateHard ? ' cell-late-hard' : ''}${isWindow ? ' cell-window' : ''}`} key={period.number}
+                <div className={`cell-button${hardConflict ? ' cell-conflict' : ''}${warnConflict ? ' cell-warn' : ''}${restricted ? ' cell-blocked' : ''}${lateHard ? ' cell-late-hard' : ''}${isWindow ? ' cell-window' : ''}${selected ? ' cell-selected' : ''}`} key={period.number}
                   role="button" tabIndex={0}
-                  onClick={() => setEdit({
-                    dayId: day.id,
-                    dayName: day.name,
-                    periodNumber: period.number,
-                    subject: cell?.subject || '',
-                    teacher: cell?.teacher || '',
-                    teacherId: cell?.teacherId || '',
-                    room: cell?.room || '',
-                    roomId: cell?.roomId || '',
-                    difficulty: cell?.difficulty || 3
-                  })}
+                  onClick={() => {
+                    setSelectedCell({ dayId: day.id, periodNumber: period.number });
+                    setEdit({
+                      dayId: day.id,
+                      dayName: day.name,
+                      periodNumber: period.number,
+                      subject: cell?.subject || '',
+                      teacher: cell?.teacher || '',
+                      teacherId: cell?.teacherId || '',
+                      room: cell?.room || '',
+                      roomId: cell?.roomId || '',
+                      difficulty: cell?.difficulty || 3
+                    });
+                  }}
                   draggable
                   onDragStart={() => setDraggedCell({ dayId: day.id, periodNumber: period.number })}
                   onDragOver={(event) => event.preventDefault()}
@@ -2219,6 +2249,12 @@ function SchedulePreview({ schedule, setSchedule, state, setNotice }) {
                     <span className={`conflict-badge${warnConflict ? ' warn' : ''}`} title={warnConflict ? 'Предупреждение — нажмите для деталей' : 'Конфликт — нажмите для деталей'}
                       onClick={(event) => { event.stopPropagation(); openConflict(day.id, period.number); }}>
                       <AlertTriangle size={14} />
+                    </span>
+                  )}
+                  {selected && cell && (
+                    <span className="delete-badge" title="Удалить урок"
+                      onClick={(event) => { event.stopPropagation(); deleteCell(day.id, period.number); }}>
+                      <X size={14} />
                     </span>
                   )}
                   {cell ? <><strong>{cell.subject}</strong><small>{cell.teacher}</small><small>{cell.room}</small></> : (isWindow ? <span className="window-tag">окно</span> : '—')}
